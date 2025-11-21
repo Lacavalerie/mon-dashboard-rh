@@ -3,9 +3,29 @@ import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 from datetime import datetime
+from fpdf import FPDF
+import time
 
 # Configuration
-st.set_page_config(page_title="Dashboard V32: Métiers & Annuaire", layout="wide")
+st.set_page_config(page_title="Dashboard V35: PDF Fix", layout="wide")
+
+# --- LOGIN ---
+if 'logged_in' not in st.session_state: st.session_state['logged_in'] = False
+def check_login():
+    if st.session_state['username'] == "admin" and st.session_state['password'] == "rh123":
+        st.session_state['logged_in'] = True
+    else: st.error("Erreur login")
+def logout(): st.session_state['logged_in'] = False; st.rerun()
+
+if not st.session_state['logged_in']:
+    st.markdown("""<style>.stApp {background-color: #1a2639;} h1 {color: white; text-align: center;}</style>""", unsafe_allow_html=True)
+    st.title("🔒 Espace RH")
+    c1,c2,c3 = st.columns([1,1,1])
+    with c2:
+        st.text_input("ID", key="username")
+        st.text_input("MDP", type="password", key="password")
+        st.button("Connexion", on_click=check_login)
+    st.stop()
 
 # --- DESIGN ---
 st.markdown("""
@@ -13,35 +33,54 @@ st.markdown("""
     .stApp { background-color: #1a2639; }
     [data-testid="stSidebar"] { background-color: #111b2b; }
     h1, h2, h3, p, div, label, span, li { color: #FFFFFF !important; }
-    [data-testid="stMetric"] {
-        background-color: #2d3e55;
-        padding: 15px;
-        border-radius: 8px;
-        border-left: 5px solid #4ade80;
-        box-shadow: 0 4px 6px rgba(0,0,0,0.3);
-    }
+    [data-testid="stMetric"] { background-color: #2d3e55; border-radius: 8px; border-left: 5px solid #4ade80; }
     [data-testid="stMetricValue"] { color: #FFFFFF !important; }
-    .smic-alert {
-        background-color: #7f1d1d;
-        color: white;
-        padding: 10px;
-        border-radius: 5px;
-        border: 1px solid #ef4444;
-    }
+    .smic-alert { background-color: #7f1d1d; color: white; padding: 10px; border-radius: 5px; border: 1px solid #ef4444; }
     </style>
 """, unsafe_allow_html=True)
+
+with st.sidebar:
+    st.write(f"👤 **{st.session_state['username']}**")
+    if st.button("Déconnexion"): logout()
+    st.markdown("---")
 
 st.title("🚀 Pilotage Stratégique : RH & Finances")
 
 # --- FONCTIONS ---
+def create_pdf(emp, form_hist):
+    pdf = FPDF()
+    pdf.add_page()
+    pdf.set_font("Arial", size=12)
+    pdf.set_font("Arial", 'B', 16)
+    pdf.cell(200, 10, txt=f"Fiche : {emp['Nom']}", ln=True, align='C')
+    pdf.ln(10)
+    
+    pdf.set_font("Arial", size=12)
+    pdf.cell(200, 10, txt=f"Poste : {emp['Poste']} ({emp.get('CSP', 'N/A')})", ln=True)
+    pdf.cell(200, 10, txt=f"Service : {emp['Service']}", ln=True)
+    pdf.cell(200, 10, txt=f"Ancienneté : {emp.get('Ancienneté (ans)', 0):.1f} ans", ln=True)
+    pdf.ln(10)
+    
+    pdf.set_font("Arial", 'B', 14)
+    pdf.cell(200, 10, txt="Rémunération", ln=True)
+    pdf.set_font("Arial", size=12)
+    pdf.cell(200, 10, txt=f"Salaire Base : {emp.get('Salaire (€)', 0):.0f} EUR", ln=True)
+    pdf.cell(200, 10, txt=f"Primes : {emp.get('Primes (€)', 0):.0f} EUR", ln=True)
+    
+    pdf.ln(10)
+    pdf.set_font("Arial", 'B', 14)
+    pdf.cell(200, 10, txt="Formations", ln=True)
+    pdf.set_font("Arial", size=12)
+    if not form_hist.empty:
+        for i, row in form_hist.iterrows():
+            pdf.cell(200, 10, txt=f"- {row['Type Formation']} ({row['Coût Formation (€)']} EUR)", ln=True)
+    else:
+        pdf.cell(200, 10, txt="Aucune formation.", ln=True)
+        
+    return pdf.output(dest='S').encode('latin-1')
+
 def clean_chart(fig):
-    fig.update_layout(
-        paper_bgcolor="rgba(0,0,0,0)", 
-        plot_bgcolor="rgba(0,0,0,0)",
-        font=dict(color="white"),
-        xaxis=dict(showgrid=False, color="white"),
-        yaxis=dict(showgrid=True, gridcolor="#444444", color="white")
-    )
+    fig.update_layout(paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)", font=dict(color="white"), xaxis=dict(showgrid=False, color="white"), yaxis=dict(showgrid=True, gridcolor="#444444", color="white"))
     return fig
 
 def calculer_donnees_rh(df):
@@ -59,7 +98,6 @@ def calculer_donnees_rh(df):
         df['Écart Svc'] = df['Salaire (€)'] - df['Moyenne Svc']
     return df
 
-# --- CHARGEMENT ---
 @st.cache_data
 def charger_donnees():
     try:
@@ -92,12 +130,14 @@ def charger_donnees():
         for col in ['Date Ouverture Poste', 'Date Clôture Poste']:
             if col in df_rec.columns: df_rec[col] = pd.to_datetime(df_rec[col], dayfirst=True, errors='coerce')
 
-        # Nettoyage pour éviter les crashs
-        if 'Primes (€)' in df_global.columns: df_global['Primes (€)'] = df_global['Primes (€)'].fillna(0)
-        if 'Salaire (€)' in df_global.columns: df_global['Salaire (€)'] = df_global['Salaire (€)'].fillna(0)
+        # Nettoyage NaN
+        cols_num = ['Primes (€)', 'Salaire (€)', 'Primes Futures (€)', 'Évaluation (1-5)']
+        for c in cols_num:
+            if c in df_global.columns: df_global[c] = df_global[c].fillna(0)
+            else: df_global[c] = 0
+            
         if 'Au SMIC' not in df_global.columns: df_global['Au SMIC'] = 'Non'
-        if 'Évaluation (1-5)' not in df_global.columns: df_global['Évaluation (1-5)'] = 0
-        else: df_global['Évaluation (1-5)'] = df_global['Évaluation (1-5)'].fillna(0)
+        if 'Catégorie Métier' not in df_global.columns: df_global['Catégorie Métier'] = 'Non défini'
 
         df_global = calculer_donnees_rh(df_global)
         return df_global, df_fin, df_rec, df_formation_detail
@@ -110,156 +150,113 @@ rh, fin, rec, form_detail = charger_donnees()
 
 if rh is not None:
     
-    # FILTRES
     st.sidebar.header("Filtres")
     liste_services = ['Tous'] + sorted(rh['Service'].unique().tolist()) if 'Service' in rh.columns else ['Tous']
     filtre_service = st.sidebar.selectbox("Service", liste_services)
     rh_f = rh[rh['Service'] == filtre_service] if filtre_service != 'Tous' else rh
-    
     if not form_detail.empty and 'Service' in form_detail.columns and filtre_service != 'Tous':
         form_f = form_detail[form_detail['Service'] == filtre_service]
-    else:
-        form_f = form_detail
+    else: form_f = form_detail
 
-    # ONGLETS
-    tab_metier, tab_fiche, tab_rem, tab_form, tab_budget, tab_simul = st.tabs([
-        "📂 Métiers & Annuaire", "🔍 Fiche Employé", "📈 Rémunération & Talents", "🎓 Formation", "💰 Budget", "🔮 Simulation"
-    ])
+    tab_metier, tab_fiche, tab_rem, tab_form, tab_budget, tab_simul = st.tabs(["📂 Métiers", "🔍 Fiche Employé", "📈 Rémunération", "🎓 Formation", "💰 Budget", "🔮 Simulation"])
 
-    # --- 1. MÉTIERS (MODIFIÉ) ---
+    # 1. MÉTIERS
     with tab_metier:
-        st.header("Cartographie des Métiers")
-        
+        st.header("Cartographie Métiers")
         c1, c2 = st.columns([1, 1])
-        
         with c1:
-            st.subheader("Répartition Hiérarchique")
-            # MODIFICATION ICI : On utilise CSP -> Poste (plus logique)
             if 'CSP' in rh_f.columns and 'Poste' in rh_f.columns:
-                fig_sun = px.sunburst(
-                    rh_f, 
-                    path=['CSP', 'Poste'], # On groupe d'abord par CSP, puis par Poste
-                    values='Salaire (€)', 
-                    title="Masse Salariale par CSP > Poste",
-                    color='CSP', 
-                    color_discrete_sequence=px.colors.qualitative.Pastel
-                )
+                fig_sun = px.sunburst(rh_f, path=['CSP', 'Poste'], values='Salaire (€)', title="Masse Salariale", color='CSP', color_discrete_sequence=px.colors.qualitative.Pastel)
                 st.plotly_chart(clean_chart(fig_sun), use_container_width=True)
-            else:
-                st.warning("Vérifiez vos colonnes CSP et Poste.")
-
         with c2:
-            st.subheader("Effectifs par Catégorie")
-            if 'CSP' in rh_f.columns:
-                df_csp = rh_f['CSP'].value_counts().reset_index()
-                df_csp.columns = ['CSP', 'Effectif']
-                fig_bar = px.bar(df_csp, x='CSP', y='Effectif', color='CSP', text_auto=True, color_discrete_sequence=px.colors.qualitative.Pastel)
-                st.plotly_chart(clean_chart(fig_bar), use_container_width=True)
+            st.subheader("Annuaire")
+            if 'CSP' in rh_f.columns and 'Poste' in rh_f.columns and 'Nom' in rh_f.columns:
+                df_d = rh_f.groupby(['CSP', 'Poste'])['Nom'].apply(lambda x: ', '.join(x)).reset_index()
+                st.dataframe(df_d, hide_index=True, use_container_width=True)
 
-        # --- AJOUT : ANNUAIRE PAR MÉTIER ---
-        st.markdown("---")
-        st.subheader("🕵️‍♂️ Qui fait quoi ? (Annuaire Interactif)")
-        
-        # Filtre rapide interne à l'onglet
-        col_search1, col_search2 = st.columns(2)
-        choix_csp = col_search1.multiselect("Filtrer par CSP", rh_f['CSP'].unique())
-        choix_poste = col_search2.multiselect("Filtrer par Poste", rh_f['Poste'].unique())
-        
-        # Filtrage dynamique du tableau
-        df_annuaire = rh_f.copy()
-        if choix_csp:
-            df_annuaire = df_annuaire[df_annuaire['CSP'].isin(choix_csp)]
-        if choix_poste:
-            df_annuaire = df_annuaire[df_annuaire['Poste'].isin(choix_poste)]
-            
-        # Affichage du tableau propre
-        st.dataframe(
-            df_annuaire[['Nom', 'Poste', 'CSP', 'Service', 'Email'] if 'Email' in df_annuaire.columns else ['Nom', 'Poste', 'CSP', 'Service']],
-            use_container_width=True,
-            hide_index=True
-        )
-
-    # --- 2. FICHE ---
+    # 2. FICHE (BOUTON PDF DÉPLACÉ)
     with tab_fiche:
         st.header("Dossier Individuel")
         liste_employes = sorted(rh_f['Nom'].unique().tolist())
         choix_employe = st.selectbox("Salarié :", liste_employes)
+        
         if choix_employe:
             emp = rh[rh['Nom'] == choix_employe].iloc[0]
+            
+            # --- LA ZONE BOUTON PDF ---
+            col_btn1, col_btn2 = st.columns([3, 1])
+            with col_btn1:
+                st.subheader(f"👤 {emp['Nom']}")
+            with col_btn2:
+                hist = form_detail[form_detail['Nom'] == choix_employe] if not form_detail.empty else pd.DataFrame()
+                try:
+                    pdf_data = create_pdf(emp, hist)
+                    st.download_button(label="📥 TÉLÉCHARGER FICHE PDF", data=pdf_data, file_name=f"Fiche_{emp['Nom']}.pdf", mime="application/pdf", use_container_width=True)
+                except Exception as e:
+                    st.error("Erreur PDF (vérifiez les accents)")
+            # --------------------------
+
             col_id1, col_id2, col_id3, col_id4 = st.columns(4)
-            col_id1.info(f"**{emp['Nom']}**")
-            col_id2.info(f"{emp['Poste']} ({emp.get('CSP', '')})")
-            col_id3.info(f"Service : {emp['Service']}")
-            col_id4.info(f"Ancienneté : {emp.get('Ancienneté (ans)', 0):.1f} ans")
+            col_id1.info(f"**Poste :** {emp['Poste']}")
+            col_id2.info(f"**Service :** {emp['Service']}")
+            col_id3.info(f"**Ancienneté :** {emp.get('Ancienneté (ans)', 0):.1f} ans")
+            col_id4.info(f"**CSP :** {emp.get('CSP', 'N/A')}")
             
             st.markdown("---")
-            c1, c2 = st.columns([2,1])
+            c1, c2 = st.columns([2, 1])
             with c1:
                 sal = emp.get('Salaire (€)', 0)
-                # Sécurisation si Primes Futures n'existe pas
-                prime_fut = emp.get('Primes Futures (€)', 0) if pd.notna(emp.get('Primes Futures (€)')) else 0
                 prime_act = emp.get('Primes (€)', 0)
+                prime_fut = emp.get('Primes Futures (€)', 0)
                 
                 k1, k2, k3 = st.columns(3)
-                k1.metric("Salaire Base", f"{sal:,.0f} €")
-                k2.metric("Primes Actu.", f"{prime_act:,.0f} €")
-                k3.metric("Primes Futures", f"{prime_fut:,.0f} €", delta="Prévu")
+                k1.metric("Base", f"{sal:,.0f} €")
+                k2.metric("Primes", f"{prime_act:,.0f} €")
+                k3.metric("Futur", f"{prime_fut:,.0f} €", delta="Prévu")
+                st.plotly_chart(clean_chart(px.bar(x=['Actuel', 'Projeté'], y=[sal+prime_act, sal+prime_act+prime_fut], title="Trajectoire", text_auto=True)), use_container_width=True)
 
-                st.plotly_chart(clean_chart(px.bar(x=['Actuel', 'Projeté'], y=[sal+prime_act, sal+prime_act+prime_fut], title="Trajectoire Salariale", text_auto=True)), use_container_width=True)
             with c2:
-                st.subheader("Alertes")
+                st.subheader("Statut")
                 if str(emp.get('Au SMIC', 'No')).lower() == 'oui': st.markdown('<div class="smic-alert">⚠️ Au SMIC</div>', unsafe_allow_html=True)
-                else: st.success("Salaire > SMIC")
+                else: st.success("✅ Conforme")
 
-            st.markdown("---")
-            st.subheader("🎓 Historique Formations")
-            if not form_detail.empty:
-                hist = form_detail[form_detail['Nom'] == choix_employe]
-                if not hist.empty: st.dataframe(hist[['Type Formation', 'Coût Formation (€)']], hide_index=True, use_container_width=True)
-                else: st.info("Aucune formation.")
+            st.subheader("🎓 Formations")
+            if not hist.empty: st.dataframe(hist[['Type Formation', 'Coût Formation (€)']], hide_index=True, use_container_width=True)
+            else: st.info("Aucune.")
 
-    # --- 3. STRATÉGIE REM ---
+    # 3. REM
     with tab_rem:
-        st.header("Rémunération & Talents")
+        st.header("Rémunération")
         k1, k2, k3 = st.columns(3)
-        k1.metric("Salaire Moyen", f"{rh_f['Salaire (€)'].mean():,.0f} €")
-        k2.metric("Masse Salariale", f"{rh_f['Salaire (€)'].sum():,.0f} €")
+        k1.metric("Moyenne", f"{rh_f['Salaire (€)'].mean():,.0f} €")
+        k2.metric("Masse", f"{rh_f['Salaire (€)'].sum():,.0f} €")
         if 'Sexe' in rh_f.columns:
             df_s = rh_f.groupby('Sexe')['Salaire (€)'].mean()
             ecart = ((df_s.get('Homme', 0) - df_s.get('Femme', 0)) / df_s.get('Homme', 1)) * 100 if 'Homme' in df_s else 0
-            k3.metric("Index H/F", f"{ecart:.1f} %", delta="Cible 0%", delta_color="inverse")
-
+            k3.metric("Ecart H/F", f"{ecart:.1f} %")
         st.markdown("---")
-        st.subheader("🎯 Matrice des Talents")
-        if 'Évaluation (1-5)' in rh_f.columns and 'Salaire (€)' in rh_f.columns:
-            fig_talents = px.scatter(rh_f, x="Évaluation (1-5)", y="Salaire (€)", size="Primes (€)", color="CSP", hover_name="Nom", text="Nom", title="Performance vs Salaire")
-            fig_talents.add_hline(y=rh_f['Salaire (€)'].mean(), line_dash="dot", line_color="white")
-            fig_talents.add_vline(x=rh_f['Évaluation (1-5)'].mean(), line_dash="dot", line_color="white")
-            fig_talents.update_traces(textposition='top center')
+        if 'Évaluation (1-5)' in rh_f.columns:
+            fig_talents = px.scatter(rh_f, x="Évaluation (1-5)", y="Salaire (€)", size="Primes (€)", color="CSP", hover_name="Nom", text="Nom", title="Talents")
             st.plotly_chart(clean_chart(fig_talents), use_container_width=True)
 
-    # --- 4. FORMATION ---
+    # 4. FORMATION
     with tab_form:
         st.header("Formation")
         if not form_f.empty:
-            budget_form = form_f['Coût Formation (€)'].sum()
-            st.metric("Budget Consommé", f"{budget_form:,.0f} €")
-            c_f1, c_f2 = st.columns(2)
-            with c_f1:
-                if 'Type Formation' in form_f.columns:
-                    st.plotly_chart(clean_chart(px.pie(form_f.groupby('Type Formation')['Coût Formation (€)'].sum().reset_index(), values='Coût Formation (€)', names='Type Formation', hole=0.4, title="Par Thème")), use_container_width=True)
-            with c_f2:
-                if 'CSP' in form_f.columns:
-                    st.plotly_chart(clean_chart(px.bar(form_f.groupby('CSP')['Coût Formation (€)'].sum().reset_index(), x='CSP', y='Coût Formation (€)', title="Par CSP", color='Coût Formation (€)')), use_container_width=True)
-        else: st.info("Aucune donnée.")
+            st.metric("Budget", f"{form_f['Coût Formation (€)'].sum():,.0f} €")
+            c1, c2 = st.columns(2)
+            with c1:
+                if 'Type Formation' in form_f.columns: st.plotly_chart(clean_chart(px.pie(form_f, names='Type Formation', values='Coût Formation (€)', hole=0.4)), use_container_width=True)
+            with c2:
+                if 'CSP' in form_f.columns: st.plotly_chart(clean_chart(px.bar(form_f.groupby('CSP')['Coût Formation (€)'].sum().reset_index(), x='CSP', y='Coût Formation (€)')), use_container_width=True)
+        else: st.info("Pas de données.")
 
-    # --- 5. BUDGET ---
+    # 5. BUDGET
     with tab_budget:
-        st.header("Consolidation")
+        st.header("Budget")
         ms = rh_f['Salaire (€)'].sum() * 12 * 1.45
         form = rh_f['Coût Formation (€)'].sum()
         rec_c = rec['Coût Recrutement (€)'].sum()
-        
         k1, k2, k3, k4 = st.columns(4)
         k1.metric("Global", f"{ms+form+rec_c:,.0f} €")
         k2.metric("Salaires", f"{ms:,.0f} €")
@@ -267,12 +264,11 @@ if rh is not None:
         k4.metric("Recrutement", f"{rec_c:,.0f} €")
         st.plotly_chart(clean_chart(px.pie(names=['Salaires', 'Formation', 'Recrutement'], values=[ms, form, rec_c], title="Répartition")), use_container_width=True)
 
-    # --- 6. SIMULATION ---
+    # 6. SIMULATION
     with tab_simul:
         st.header("Simulation")
         augm = st.sidebar.slider("Hausse (%)", 0.0, 100.0, 0.0, 0.5)
         cout = rh_f['Salaire (€)'].sum() * (augm/100) * 12 * 1.45
         st.metric("Impact", f"{cout:,.0f} €", delta="Surcoût", delta_color="inverse")
         marge = fin['Flux'].sum() if 'Flux' in fin.columns else 0
-        fig = go.Figure(go.Waterfall(measure=["relative", "relative", "total"], x=["Actuel", "Coût", "Futur"], y=[marge, -cout, marge-cout]))
-        st.plotly_chart(clean_chart(fig), use_container_width=True)
+        st.plotly_chart(clean_chart(go.Figure(go.Waterfall(measure=["relative", "relative", "total"], x=["Actuel", "Coût", "Futur"], y=[marge, -cout, marge-cout], decreasing={"marker":{"color":"#fb923c"}}, increasing={"marker":{"color":"#4ade80"}}, totals={"marker":{"color":"#60a5fa"}}))), use_container_width=True)
