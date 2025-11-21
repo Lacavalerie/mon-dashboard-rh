@@ -8,30 +8,21 @@ import gspread
 from google.oauth2.service_account import Credentials
 
 # Configuration
-st.set_page_config(page_title="Dashboard V40: Google Sheets", layout="wide")
+st.set_page_config(page_title="Dashboard V41: Recrutement Fix", layout="wide")
 
-# --- AUTHENTIFICATION GOOGLE SHEETS ---
-# Cette fonction connecte le Dashboard au Cloud
+# --- AUTH GOOGLE ---
 def connect_google_sheet():
     try:
-        # On récupère les infos secrètes depuis Streamlit Cloud
         secrets = st.secrets["gcp_service_account"]
-        
-        # On définit les droits d'accès
-        scope = [
-            "https://www.googleapis.com/auth/spreadsheets",
-            "https://www.googleapis.com/auth/drive"
-        ]
-        
-        # On crée les identifiants
+        scope = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
         creds = Credentials.from_service_account_info(secrets, scopes=scope)
         client = gspread.authorize(creds)
-        
-        # On ouvre le fichier (ATTENTION : Le nom doit être EXACT)
-        sheet = client.open("Dashboard_Data")
+        # REMPLACE ICI PAR TON ID SI TU AS MIS UN ID, SINON LAISSE LE NOM
+        # sheet = client.open_by_key("TON_ID_ICI") 
+        sheet = client.open("Dashboard_Data") 
         return sheet
     except Exception as e:
-        st.error(f"⚠️ Erreur de connexion Google : {e}")
+        st.error(f"⚠️ Erreur connexion Google : {e}")
         st.stop()
 
 # --- LOGIN ---
@@ -48,7 +39,6 @@ def check_login():
 
 def logout():
     st.session_state['logged_in'] = False
-    st.session_state['username'] = ""
     st.rerun()
 
 if not st.session_state['logged_in']:
@@ -119,13 +109,10 @@ def calculer_donnees_rh(df):
     today = datetime.now()
     if 'Date Naissance' in df.columns:
         df['Date Naissance'] = pd.to_datetime(df['Date Naissance'], errors='coerce')
-        # Calcul âge robuste
         df['Âge'] = df['Date Naissance'].apply(lambda x: (today - x).days // 365 if pd.notnull(x) else 0)
-        
     if 'Date Entrée' in df.columns:
         df['Date Entrée'] = pd.to_datetime(df['Date Entrée'], errors='coerce')
         df['Ancienneté (ans)'] = df['Date Entrée'].apply(lambda x: (today - x).days / 365 if pd.notnull(x) else 0)
-    
     if 'Service' in df.columns and 'Salaire (€)' in df.columns:
         moyennes = df.groupby('Service')['Salaire (€)'].mean().reset_index()
         moyennes = moyennes.rename(columns={'Salaire (€)': 'Moyenne Svc'})
@@ -133,40 +120,30 @@ def calculer_donnees_rh(df):
         df['Écart Svc'] = df['Salaire (€)'] - df['Moyenne Svc']
     return df
 
-# --- CHARGEMENT VIA GOOGLE SHEETS (TTL = 60 secondes de cache) ---
 @st.cache_data(ttl=60)
 def charger_donnees():
     try:
-        # Connexion GSheet
         sheet = connect_google_sheet()
         
-        # Lecture des onglets (get_all_records renvoie une liste de dicts)
-        # On convertit directement en DataFrame
-        # Attention : Google Sheet doit avoir EXACTEMENT ces noms d'onglets en bas
         df_social = pd.DataFrame(sheet.worksheet('Données Sociales').get_all_records())
         df_sal = pd.DataFrame(sheet.worksheet('Salaires').get_all_records())
         df_form = pd.DataFrame(sheet.worksheet('Formation').get_all_records())
         df_rec = pd.DataFrame(sheet.worksheet('Recrutement').get_all_records())
         df_fin = pd.DataFrame(sheet.worksheet('Finances').get_all_records())
 
-        # Nettoyage Noms Colonnes (strip)
         for df in [df_social, df_sal, df_form, df_rec, df_fin]:
             df.columns = [c.strip() for c in df.columns]
 
-        # Corrections orthographe
         if 'Primes(€)' in df_sal.columns: df_sal.rename(columns={'Primes(€)': 'Primes (€)'}, inplace=True)
         if 'Cout Formation (€)' in df_form.columns: df_form.rename(columns={'Cout Formation (€)': 'Coût Formation (€)'}, inplace=True)
         if 'Type de Formation' in df_form.columns: df_form.rename(columns={'Type de Formation': 'Type Formation'}, inplace=True)
 
-        # FUSION
         if 'Nom' in df_social.columns and 'Nom' in df_sal.columns:
             df_global = pd.merge(df_social, df_sal, on='Nom', how='left')
         else: return None, None, None, None
 
         if 'Nom' in df_form.columns and 'Coût Formation (€)' in df_form.columns:
-            # Conversion numérique forcée pour Formation (Google envoie parfois du texte)
             df_form['Coût Formation (€)'] = pd.to_numeric(df_form['Coût Formation (€)'], errors='coerce').fillna(0)
-            
             df_formation_detail = pd.merge(df_form, df_social[['Nom', 'Service', 'CSP']], on='Nom', how='left')
             form_group = df_form.groupby('Nom')['Coût Formation (€)'].sum().reset_index()
             df_global = pd.merge(df_global, form_group, on='Nom', how='left')
@@ -175,20 +152,14 @@ def charger_donnees():
             df_global['Coût Formation (€)'] = 0
             df_formation_detail = pd.DataFrame()
 
-        # Dates Recrutement (Conversion forcée)
         for col in ['Date Ouverture Poste', 'Date Clôture Poste']:
-            if col in df_rec.columns: 
-                df_rec[col] = pd.to_datetime(df_rec[col], dayfirst=True, errors='coerce')
+            if col in df_rec.columns: df_rec[col] = pd.to_datetime(df_rec[col], dayfirst=True, errors='coerce')
         
-        # Conversion Numérique Globale (Au cas où "2 000 €" est écrit en texte)
         cols_num = ['Primes (€)', 'Salaire (€)', 'Primes Futures (€)', 'Évaluation (1-5)', 'Coût Recrutement (€)']
         for c in cols_num:
-            if c in df_global.columns: 
-                df_global[c] = pd.to_numeric(df_global[c], errors='coerce').fillna(0)
-            if c in df_rec.columns:
-                df_rec[c] = pd.to_numeric(df_rec[c], errors='coerce').fillna(0)
+            if c in df_global.columns: df_global[c] = pd.to_numeric(df_global[c], errors='coerce').fillna(0)
+            if c in df_rec.columns: df_rec[c] = pd.to_numeric(df_rec[c], errors='coerce').fillna(0)
 
-        # Valeurs par défaut
         if 'Au SMIC' not in df_global.columns: df_global['Au SMIC'] = 'Non'
         if 'Catégorie Métier' not in df_global.columns: df_global['Catégorie Métier'] = 'Non défini'
 
@@ -211,10 +182,17 @@ if rh is not None:
         form_f = form_detail[form_detail['Service'] == filtre_service]
     else: form_f = form_detail
 
-    tab_metier, tab_fiche, tab_rem, tab_form, tab_budget, tab_simul = st.tabs(["📂 Métiers", "🔍 Fiche Employé", "📈 Rémunération", "🎓 Formation", "💰 Budget", "🔮 Simulation"])
+    # ICI : J'ai rajouté "🎯 Recrutement" dans la liste des onglets !
+    tab_metier, tab_fiche, tab_rem, tab_form, tab_rec, tab_budget, tab_simul = st.tabs([
+        "📂 Métiers", 
+        "🔍 Fiche Employé", 
+        "📈 Rémunération", 
+        "🎓 Formation", 
+        "🎯 Recrutement", 
+        "💰 Budget", 
+        "🔮 Simulation"
+    ])
 
-    # [CONTENU IDENTIQUE V36 MAIS CONNECTÉ AU CLOUD]
-    
     with tab_metier:
         st.header("Cartographie Métiers")
         c1, c2 = st.columns([1, 1])
@@ -291,6 +269,30 @@ if rh is not None:
             with c2:
                 if 'CSP' in form_f.columns: st.plotly_chart(clean_chart(px.bar(form_f.groupby('CSP')['Coût Formation (€)'].sum().reset_index(), x='CSP', y='Coût Formation (€)')), use_container_width=True)
         else: st.info("Pas de données.")
+
+    # --- ONGLET RECRUTEMENT (NOUVEAU) ---
+    with tab_rec:
+        st.header("Recrutement")
+        # KPIs
+        avg_time = rec['Temps Recrutement (jours)'].mean() if 'Temps Recrutement (jours)' in rec.columns else 0
+        if 'Date Clôture Poste' in rec.columns and 'Date Ouverture Poste' in rec.columns:
+             # Recalcul rapide si la colonne n'est pas dans le sheet
+             rec['Temps'] = (rec['Date Clôture Poste'] - rec['Date Ouverture Poste']).dt.days
+             avg_time = rec['Temps'].mean()
+        
+        total_cout_rec = rec['Coût Recrutement (€)'].sum() if 'Coût Recrutement (€)' in rec.columns else 0
+        nb_candidats = rec['Nombre Candidats'].sum() if 'Nombre Candidats' in rec.columns else 0
+
+        c1, c2, c3 = st.columns(3)
+        c1.metric("Temps Moyen", f"{avg_time:.0f} jours")
+        c2.metric("Coût Total", f"{total_cout_rec:,.0f} €")
+        c3.metric("Candidats", f"{nb_candidats:,.0f}")
+
+        st.markdown("---")
+        if 'Canal Sourcing' in rec.columns:
+            # Graphique Sourcing
+            df_src = rec.groupby('Canal Sourcing').size().reset_index(name='Nombre')
+            st.plotly_chart(clean_chart(px.bar(df_src, x='Canal Sourcing', y='Nombre', color='Canal Sourcing', title="Sources")), use_container_width=True)
 
     with tab_budget:
         st.header("Budget")
