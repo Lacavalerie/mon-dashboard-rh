@@ -4,49 +4,62 @@ import plotly.express as px
 import plotly.graph_objects as go
 from datetime import datetime
 from fpdf import FPDF
-import time
+import gspread
+from google.oauth2.service_account import Credentials
 
 # Configuration
-st.set_page_config(page_title="Dashboard V36: Stable Login", layout="wide")
+st.set_page_config(page_title="Dashboard V40: Google Sheets", layout="wide")
 
-# --- 1. INITIALISATION SÉCURISÉE DES VARIABLES ---
-if 'logged_in' not in st.session_state:
-    st.session_state['logged_in'] = False
-if 'username' not in st.session_state:
-    st.session_state['username'] = "" # On initialise à vide pour éviter le KeyError
+# --- AUTHENTIFICATION GOOGLE SHEETS ---
+# Cette fonction connecte le Dashboard au Cloud
+def connect_google_sheet():
+    try:
+        # On récupère les infos secrètes depuis Streamlit Cloud
+        secrets = st.secrets["gcp_service_account"]
+        
+        # On définit les droits d'accès
+        scope = [
+            "https://www.googleapis.com/auth/spreadsheets",
+            "https://www.googleapis.com/auth/drive"
+        ]
+        
+        # On crée les identifiants
+        creds = Credentials.from_service_account_info(secrets, scopes=scope)
+        client = gspread.authorize(creds)
+        
+        # On ouvre le fichier (ATTENTION : Le nom doit être EXACT)
+        sheet = client.open("Dashboard_Data")
+        return sheet
+    except Exception as e:
+        st.error(f"⚠️ Erreur de connexion Google : {e}")
+        st.stop()
 
-# --- FONCTIONS LOGIN ---
+# --- LOGIN ---
+if 'logged_in' not in st.session_state: st.session_state['logged_in'] = False
+if 'username' not in st.session_state: st.session_state['username'] = ""
+
 def check_login():
-    # On récupère les valeurs des champs
     user = st.session_state['input_user']
     pwd = st.session_state['input_password']
-    
     if user == "admin" and pwd == "rh123":
         st.session_state['logged_in'] = True
-        st.session_state['username'] = user # On sauvegarde le nom pour plus tard
-    else:
-        st.error("Identifiant ou mot de passe incorrect")
+        st.session_state['username'] = user
+    else: st.error("Erreur login")
 
 def logout():
     st.session_state['logged_in'] = False
     st.session_state['username'] = ""
     st.rerun()
 
-# --- ÉCRAN DE CONNEXION ---
 if not st.session_state['logged_in']:
     st.markdown("""<style>.stApp {background-color: #1a2639;} h1 {color: white; text-align: center;}</style>""", unsafe_allow_html=True)
-    st.title("🔒 Espace RH")
+    st.title("🔒 Espace RH (Cloud)")
     c1,c2,c3 = st.columns([1,1,1])
     with c2:
-        # On utilise des clés temporaires (input_*) pour éviter les conflits
-        st.text_input("Identifiant", key="input_user")
-        st.text_input("Mot de passe", type="password", key="input_password")
-        st.button("Se connecter", on_click=check_login)
-    st.stop() # On arrête tout ici si pas connecté
-
-# =========================================================
-# --- LE DASHBOARD (Une fois connecté) ---
-# =========================================================
+        st.text_input("ID", key="input_user")
+        st.text_input("MDP", type="password", key="input_password")
+        st.button("Connexion", on_click=check_login)
+    st.stop()
 
 # --- DESIGN ---
 st.markdown("""
@@ -60,41 +73,40 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-# BARRE LATÉRALE
 with st.sidebar:
-    # On utilise .get() pour être sûr que ça ne plante jamais
-    user_display = st.session_state.get('username', 'Admin')
-    st.write(f"👤 **{user_display}**")
+    st.write(f"👤 **{st.session_state.get('username', 'Admin')}**")
     if st.button("Déconnexion"): logout()
     st.markdown("---")
 
 st.title("🚀 Pilotage Stratégique : RH & Finances")
 
-# --- FONCTIONS DASHBOARD ---
+# --- FONCTIONS ---
 def create_pdf(emp, form_hist):
     pdf = FPDF()
     pdf.add_page()
     pdf.set_font("Arial", size=12)
     pdf.set_font("Arial", 'B', 16)
-    pdf.cell(200, 10, txt=f"Fiche : {emp['Nom']}", ln=True, align='C')
+    pdf.cell(200, 10, txt=f"FICHE : {emp['Nom']}", ln=True, align='C')
     pdf.ln(10)
     pdf.set_font("Arial", size=12)
     pdf.cell(200, 10, txt=f"Poste : {emp['Poste']} ({emp.get('CSP', 'N/A')})", ln=True)
     pdf.cell(200, 10, txt=f"Service : {emp['Service']}", ln=True)
-    pdf.cell(200, 10, txt=f"Ancienneté : {emp.get('Ancienneté (ans)', 0):.1f} ans", ln=True)
+    pdf.cell(200, 10, txt=f"Anciennete : {emp.get('Ancienneté (ans)', 0):.1f} ans", ln=True)
     pdf.ln(10)
     pdf.set_font("Arial", 'B', 14)
-    pdf.cell(200, 10, txt="Rémunération", ln=True)
+    pdf.cell(200, 10, txt="REMUNERATION", ln=True)
     pdf.set_font("Arial", size=12)
     pdf.cell(200, 10, txt=f"Salaire Base : {emp.get('Salaire (€)', 0):.0f} EUR", ln=True)
     pdf.cell(200, 10, txt=f"Primes : {emp.get('Primes (€)', 0):.0f} EUR", ln=True)
     pdf.ln(10)
     pdf.set_font("Arial", 'B', 14)
-    pdf.cell(200, 10, txt="Formations", ln=True)
+    pdf.cell(200, 10, txt="HISTORIQUE FORMATION", ln=True)
     pdf.set_font("Arial", size=12)
     if not form_hist.empty:
         for i, row in form_hist.iterrows():
-            pdf.cell(200, 10, txt=f"- {row['Type Formation']} ({row['Coût Formation (€)']} EUR)", ln=True)
+            txt = f"- {row['Type Formation']} ({row['Coût Formation (€)']} EUR)"
+            try: pdf.cell(200, 10, txt=txt.encode('latin-1', 'replace').decode('latin-1'), ln=True)
+            except: pdf.cell(200, 10, txt="Erreur encodage texte formation", ln=True)
     else:
         pdf.cell(200, 10, txt="Aucune formation.", ln=True)
     return pdf.output(dest='S').encode('latin-1')
@@ -106,11 +118,14 @@ def clean_chart(fig):
 def calculer_donnees_rh(df):
     today = datetime.now()
     if 'Date Naissance' in df.columns:
-        df['Date Naissance'] = pd.to_datetime(df['Date Naissance'], dayfirst=True, errors='coerce')
-        df['Âge'] = (today - df['Date Naissance']).dt.days // 365
+        df['Date Naissance'] = pd.to_datetime(df['Date Naissance'], errors='coerce')
+        # Calcul âge robuste
+        df['Âge'] = df['Date Naissance'].apply(lambda x: (today - x).days // 365 if pd.notnull(x) else 0)
+        
     if 'Date Entrée' in df.columns:
-        df['Date Entrée'] = pd.to_datetime(df['Date Entrée'], dayfirst=True, errors='coerce')
-        df['Ancienneté (ans)'] = (today - df['Date Entrée']).dt.days / 365
+        df['Date Entrée'] = pd.to_datetime(df['Date Entrée'], errors='coerce')
+        df['Ancienneté (ans)'] = df['Date Entrée'].apply(lambda x: (today - x).days / 365 if pd.notnull(x) else 0)
+    
     if 'Service' in df.columns and 'Salaire (€)' in df.columns:
         moyennes = df.groupby('Service')['Salaire (€)'].mean().reset_index()
         moyennes = moyennes.rename(columns={'Salaire (€)': 'Moyenne Svc'})
@@ -118,27 +133,40 @@ def calculer_donnees_rh(df):
         df['Écart Svc'] = df['Salaire (€)'] - df['Moyenne Svc']
     return df
 
-@st.cache_data
+# --- CHARGEMENT VIA GOOGLE SHEETS (TTL = 60 secondes de cache) ---
+@st.cache_data(ttl=60)
 def charger_donnees():
     try:
-        df_social = pd.read_excel('Test_Dashboard.xlsx', sheet_name='Données Sociales')
-        df_sal = pd.read_excel('Test_Dashboard.xlsx', sheet_name='Salaires')
-        df_form = pd.read_excel('Test_Dashboard.xlsx', sheet_name='Formation')
-        df_rec = pd.read_excel('Test_Dashboard.xlsx', sheet_name='Recrutement')
-        df_fin = pd.read_excel('Test_Dashboard.xlsx', sheet_name='Finances')
+        # Connexion GSheet
+        sheet = connect_google_sheet()
+        
+        # Lecture des onglets (get_all_records renvoie une liste de dicts)
+        # On convertit directement en DataFrame
+        # Attention : Google Sheet doit avoir EXACTEMENT ces noms d'onglets en bas
+        df_social = pd.DataFrame(sheet.worksheet('Données Sociales').get_all_records())
+        df_sal = pd.DataFrame(sheet.worksheet('Salaires').get_all_records())
+        df_form = pd.DataFrame(sheet.worksheet('Formation').get_all_records())
+        df_rec = pd.DataFrame(sheet.worksheet('Recrutement').get_all_records())
+        df_fin = pd.DataFrame(sheet.worksheet('Finances').get_all_records())
 
+        # Nettoyage Noms Colonnes (strip)
         for df in [df_social, df_sal, df_form, df_rec, df_fin]:
-            df.columns = df.columns.str.strip()
+            df.columns = [c.strip() for c in df.columns]
 
+        # Corrections orthographe
         if 'Primes(€)' in df_sal.columns: df_sal.rename(columns={'Primes(€)': 'Primes (€)'}, inplace=True)
         if 'Cout Formation (€)' in df_form.columns: df_form.rename(columns={'Cout Formation (€)': 'Coût Formation (€)'}, inplace=True)
         if 'Type de Formation' in df_form.columns: df_form.rename(columns={'Type de Formation': 'Type Formation'}, inplace=True)
 
+        # FUSION
         if 'Nom' in df_social.columns and 'Nom' in df_sal.columns:
             df_global = pd.merge(df_social, df_sal, on='Nom', how='left')
         else: return None, None, None, None
 
         if 'Nom' in df_form.columns and 'Coût Formation (€)' in df_form.columns:
+            # Conversion numérique forcée pour Formation (Google envoie parfois du texte)
+            df_form['Coût Formation (€)'] = pd.to_numeric(df_form['Coût Formation (€)'], errors='coerce').fillna(0)
+            
             df_formation_detail = pd.merge(df_form, df_social[['Nom', 'Service', 'CSP']], on='Nom', how='left')
             form_group = df_form.groupby('Nom')['Coût Formation (€)'].sum().reset_index()
             df_global = pd.merge(df_global, form_group, on='Nom', how='left')
@@ -147,15 +175,20 @@ def charger_donnees():
             df_global['Coût Formation (€)'] = 0
             df_formation_detail = pd.DataFrame()
 
+        # Dates Recrutement (Conversion forcée)
         for col in ['Date Ouverture Poste', 'Date Clôture Poste']:
-            if col in df_rec.columns: df_rec[col] = pd.to_datetime(df_rec[col], dayfirst=True, errors='coerce')
-
-        # Nettoyage complet des NaN
-        cols_num = ['Primes (€)', 'Salaire (€)', 'Primes Futures (€)', 'Évaluation (1-5)']
+            if col in df_rec.columns: 
+                df_rec[col] = pd.to_datetime(df_rec[col], dayfirst=True, errors='coerce')
+        
+        # Conversion Numérique Globale (Au cas où "2 000 €" est écrit en texte)
+        cols_num = ['Primes (€)', 'Salaire (€)', 'Primes Futures (€)', 'Évaluation (1-5)', 'Coût Recrutement (€)']
         for c in cols_num:
-            if c in df_global.columns: df_global[c] = df_global[c].fillna(0)
-            else: df_global[c] = 0
-            
+            if c in df_global.columns: 
+                df_global[c] = pd.to_numeric(df_global[c], errors='coerce').fillna(0)
+            if c in df_rec.columns:
+                df_rec[c] = pd.to_numeric(df_rec[c], errors='coerce').fillna(0)
+
+        # Valeurs par défaut
         if 'Au SMIC' not in df_global.columns: df_global['Au SMIC'] = 'Non'
         if 'Catégorie Métier' not in df_global.columns: df_global['Catégorie Métier'] = 'Non défini'
 
@@ -163,7 +196,7 @@ def charger_donnees():
         return df_global, df_fin, df_rec, df_formation_detail
 
     except Exception as e:
-        st.error(f"Erreur : {e}")
+        st.error(f"Erreur Google Sheets : {e}")
         return None, None, None, None
 
 rh, fin, rec, form_detail = charger_donnees()
@@ -180,7 +213,8 @@ if rh is not None:
 
     tab_metier, tab_fiche, tab_rem, tab_form, tab_budget, tab_simul = st.tabs(["📂 Métiers", "🔍 Fiche Employé", "📈 Rémunération", "🎓 Formation", "💰 Budget", "🔮 Simulation"])
 
-    # 1. MÉTIERS
+    # [CONTENU IDENTIQUE V36 MAIS CONNECTÉ AU CLOUD]
+    
     with tab_metier:
         st.header("Cartographie Métiers")
         c1, c2 = st.columns([1, 1])
@@ -194,12 +228,10 @@ if rh is not None:
                 df_d = rh_f.groupby(['CSP', 'Poste'])['Nom'].apply(lambda x: ', '.join(x)).reset_index()
                 st.dataframe(df_d, hide_index=True, use_container_width=True)
 
-    # 2. FICHE
     with tab_fiche:
         st.header("Dossier Individuel")
         liste_employes = sorted(rh_f['Nom'].unique().tolist())
         choix_employe = st.selectbox("Salarié :", liste_employes)
-        
         if choix_employe:
             emp = rh[rh['Nom'] == choix_employe].iloc[0]
             col_titre, col_btn = st.columns([3, 1])
@@ -208,8 +240,8 @@ if rh is not None:
                 hist = form_detail[form_detail['Nom'] == choix_employe] if not form_detail.empty else pd.DataFrame()
                 try:
                     pdf_data = create_pdf(emp, hist)
-                    st.download_button(label="📥 TÉLÉCHARGER FICHE PDF", data=pdf_data, file_name=f"Fiche_{emp['Nom']}.pdf", mime="application/pdf", use_container_width=True)
-                except Exception as e: st.error("Erreur PDF")
+                    st.download_button(label="📥 TÉLÉCHARGER PDF", data=pdf_data, file_name=f"Fiche_{emp['Nom']}.pdf", mime="application/pdf", use_container_width=True)
+                except Exception as e: st.error(f"Erreur PDF: {e}")
 
             col_id1, col_id2, col_id3, col_id4 = st.columns(4)
             col_id1.info(f"**Poste :** {emp['Poste']}")
@@ -235,7 +267,6 @@ if rh is not None:
             if not hist.empty: st.dataframe(hist[['Type Formation', 'Coût Formation (€)']], hide_index=True, use_container_width=True)
             else: st.info("Aucune.")
 
-    # 3. REM
     with tab_rem:
         st.header("Rémunération")
         k1, k2, k3 = st.columns(3)
@@ -250,7 +281,6 @@ if rh is not None:
             fig_talents = px.scatter(rh_f, x="Évaluation (1-5)", y="Salaire (€)", size="Primes (€)", color="CSP", hover_name="Nom", text="Nom", title="Talents")
             st.plotly_chart(clean_chart(fig_talents), use_container_width=True)
 
-    # 4. FORMATION
     with tab_form:
         st.header("Formation")
         if not form_f.empty:
@@ -262,7 +292,6 @@ if rh is not None:
                 if 'CSP' in form_f.columns: st.plotly_chart(clean_chart(px.bar(form_f.groupby('CSP')['Coût Formation (€)'].sum().reset_index(), x='CSP', y='Coût Formation (€)')), use_container_width=True)
         else: st.info("Pas de données.")
 
-    # 5. BUDGET
     with tab_budget:
         st.header("Budget")
         ms = rh_f['Salaire (€)'].sum() * 12 * 1.45
@@ -275,7 +304,6 @@ if rh is not None:
         k4.metric("Recrutement", f"{rec_c:,.0f} €")
         st.plotly_chart(clean_chart(px.pie(names=['Salaires', 'Formation', 'Recrutement'], values=[ms, form, rec_c], title="Répartition")), use_container_width=True)
 
-    # 6. SIMULATION
     with tab_simul:
         st.header("Simulation")
         augm = st.sidebar.slider("Hausse (%)", 0.0, 100.0, 0.0, 0.5)
