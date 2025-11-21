@@ -8,7 +8,7 @@ import gspread
 from google.oauth2.service_account import Credentials
 
 # Configuration
-st.set_page_config(page_title="Dashboard V41: Recrutement Fix", layout="wide")
+st.set_page_config(page_title="Dashboard V42: Fix Chiffres", layout="wide")
 
 # --- AUTH GOOGLE ---
 def connect_google_sheet():
@@ -17,8 +17,8 @@ def connect_google_sheet():
         scope = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
         creds = Credentials.from_service_account_info(secrets, scopes=scope)
         client = gspread.authorize(creds)
-        # REMPLACE ICI PAR TON ID SI TU AS MIS UN ID, SINON LAISSE LE NOM
-        # sheet = client.open_by_key("TON_ID_ICI") 
+        # REMPLACE PAR L'ID DE TON SHEET (celui que tu avais mis avant)
+        # OU LAISSE LE NOM SI CA MARCHE
         sheet = client.open("Dashboard_Data") 
         return sheet
     except Exception as e:
@@ -120,6 +120,16 @@ def calculer_donnees_rh(df):
         df['Écart Svc'] = df['Salaire (€)'] - df['Moyenne Svc']
     return df
 
+# --- NETTOYEUR DE MONNAIE ---
+def clean_currency(val):
+    """Transforme '2 000,00 €' en 2000.00"""
+    if isinstance(val, str):
+        # On enlève le symbole euro, les espaces insécables (\xa0) et les espaces normaux
+        val = val.replace('€', '').replace('\xa0', '').replace(' ', '')
+        # On remplace la virgule par un point
+        val = val.replace(',', '.')
+    return val
+
 @st.cache_data(ttl=60)
 def charger_donnees():
     try:
@@ -134,16 +144,35 @@ def charger_donnees():
         for df in [df_social, df_sal, df_form, df_rec, df_fin]:
             df.columns = [c.strip() for c in df.columns]
 
+        # CORRECTIONS NOMS COLONNES
         if 'Primes(€)' in df_sal.columns: df_sal.rename(columns={'Primes(€)': 'Primes (€)'}, inplace=True)
+        
+        # ICI : Correction pour ta colonne Formation (qui n'avait pas le (€))
+        if 'Coût Formation' in df_form.columns: df_form.rename(columns={'Coût Formation': 'Coût Formation (€)'}, inplace=True)
         if 'Cout Formation (€)' in df_form.columns: df_form.rename(columns={'Cout Formation (€)': 'Coût Formation (€)'}, inplace=True)
+        
         if 'Type de Formation' in df_form.columns: df_form.rename(columns={'Type de Formation': 'Type Formation'}, inplace=True)
 
+        # FUSION
         if 'Nom' in df_social.columns and 'Nom' in df_sal.columns:
             df_global = pd.merge(df_social, df_sal, on='Nom', how='left')
         else: return None, None, None, None
 
-        if 'Nom' in df_form.columns and 'Coût Formation (€)' in df_form.columns:
+        # --- NETTOYAGE DES CHIFFRES AVANT CALCUL ---
+        cols_argent = ['Salaire (€)', 'Primes (€)', 'Primes Futures (€)', 'Coût Formation (€)', 'Coût Recrutement (€)']
+        
+        # On applique le nettoyeur sur Formation
+        if 'Coût Formation (€)' in df_form.columns:
+            df_form['Coût Formation (€)'] = df_form['Coût Formation (€)'].apply(clean_currency)
             df_form['Coût Formation (€)'] = pd.to_numeric(df_form['Coût Formation (€)'], errors='coerce').fillna(0)
+
+        # On applique le nettoyeur sur Recrutement
+        if 'Coût Recrutement (€)' in df_rec.columns:
+            df_rec['Coût Recrutement (€)'] = df_rec['Coût Recrutement (€)'].apply(clean_currency)
+            df_rec['Coût Recrutement (€)'] = pd.to_numeric(df_rec['Coût Recrutement (€)'], errors='coerce').fillna(0)
+
+        # --- SUITE FUSION ---
+        if 'Nom' in df_form.columns and 'Coût Formation (€)' in df_form.columns:
             df_formation_detail = pd.merge(df_form, df_social[['Nom', 'Service', 'CSP']], on='Nom', how='left')
             form_group = df_form.groupby('Nom')['Coût Formation (€)'].sum().reset_index()
             df_global = pd.merge(df_global, form_group, on='Nom', how='left')
@@ -155,10 +184,11 @@ def charger_donnees():
         for col in ['Date Ouverture Poste', 'Date Clôture Poste']:
             if col in df_rec.columns: df_rec[col] = pd.to_datetime(df_rec[col], dayfirst=True, errors='coerce')
         
-        cols_num = ['Primes (€)', 'Salaire (€)', 'Primes Futures (€)', 'Évaluation (1-5)', 'Coût Recrutement (€)']
-        for c in cols_num:
-            if c in df_global.columns: df_global[c] = pd.to_numeric(df_global[c], errors='coerce').fillna(0)
-            if c in df_rec.columns: df_rec[c] = pd.to_numeric(df_rec[c], errors='coerce').fillna(0)
+        # Nettoyage du global (Salaires)
+        for c in ['Primes (€)', 'Salaire (€)', 'Primes Futures (€)', 'Évaluation (1-5)']:
+            if c in df_global.columns: 
+                df_global[c] = df_global[c].apply(clean_currency) # On nettoie aussi ici
+                df_global[c] = pd.to_numeric(df_global[c], errors='coerce').fillna(0)
 
         if 'Au SMIC' not in df_global.columns: df_global['Au SMIC'] = 'Non'
         if 'Catégorie Métier' not in df_global.columns: df_global['Catégorie Métier'] = 'Non défini'
@@ -182,15 +212,8 @@ if rh is not None:
         form_f = form_detail[form_detail['Service'] == filtre_service]
     else: form_f = form_detail
 
-    # ICI : J'ai rajouté "🎯 Recrutement" dans la liste des onglets !
     tab_metier, tab_fiche, tab_rem, tab_form, tab_rec, tab_budget, tab_simul = st.tabs([
-        "📂 Métiers", 
-        "🔍 Fiche Employé", 
-        "📈 Rémunération", 
-        "🎓 Formation", 
-        "🎯 Recrutement", 
-        "💰 Budget", 
-        "🔮 Simulation"
+        "📂 Métiers", "🔍 Fiche Employé", "📈 Rémunération", "🎓 Formation", "🎯 Recrutement", "💰 Budget", "🔮 Simulation"
     ])
 
     with tab_metier:
@@ -270,13 +293,10 @@ if rh is not None:
                 if 'CSP' in form_f.columns: st.plotly_chart(clean_chart(px.bar(form_f.groupby('CSP')['Coût Formation (€)'].sum().reset_index(), x='CSP', y='Coût Formation (€)')), use_container_width=True)
         else: st.info("Pas de données.")
 
-    # --- ONGLET RECRUTEMENT (NOUVEAU) ---
     with tab_rec:
         st.header("Recrutement")
-        # KPIs
         avg_time = rec['Temps Recrutement (jours)'].mean() if 'Temps Recrutement (jours)' in rec.columns else 0
         if 'Date Clôture Poste' in rec.columns and 'Date Ouverture Poste' in rec.columns:
-             # Recalcul rapide si la colonne n'est pas dans le sheet
              rec['Temps'] = (rec['Date Clôture Poste'] - rec['Date Ouverture Poste']).dt.days
              avg_time = rec['Temps'].mean()
         
@@ -290,7 +310,6 @@ if rh is not None:
 
         st.markdown("---")
         if 'Canal Sourcing' in rec.columns:
-            # Graphique Sourcing
             df_src = rec.groupby('Canal Sourcing').size().reset_index(name='Nombre')
             st.plotly_chart(clean_chart(px.bar(df_src, x='Canal Sourcing', y='Nombre', color='Canal Sourcing', title="Sources")), use_container_width=True)
 
