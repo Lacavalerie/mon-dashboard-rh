@@ -7,25 +7,46 @@ from fpdf import FPDF
 import time
 
 # Configuration
-st.set_page_config(page_title="Dashboard V35: PDF Fix", layout="wide")
+st.set_page_config(page_title="Dashboard V36: Stable Login", layout="wide")
 
-# --- LOGIN ---
-if 'logged_in' not in st.session_state: st.session_state['logged_in'] = False
+# --- 1. INITIALISATION SÉCURISÉE DES VARIABLES ---
+if 'logged_in' not in st.session_state:
+    st.session_state['logged_in'] = False
+if 'username' not in st.session_state:
+    st.session_state['username'] = "" # On initialise à vide pour éviter le KeyError
+
+# --- FONCTIONS LOGIN ---
 def check_login():
-    if st.session_state['username'] == "admin" and st.session_state['password'] == "rh123":
+    # On récupère les valeurs des champs
+    user = st.session_state['input_user']
+    pwd = st.session_state['input_password']
+    
+    if user == "admin" and pwd == "rh123":
         st.session_state['logged_in'] = True
-    else: st.error("Erreur login")
-def logout(): st.session_state['logged_in'] = False; st.rerun()
+        st.session_state['username'] = user # On sauvegarde le nom pour plus tard
+    else:
+        st.error("Identifiant ou mot de passe incorrect")
 
+def logout():
+    st.session_state['logged_in'] = False
+    st.session_state['username'] = ""
+    st.rerun()
+
+# --- ÉCRAN DE CONNEXION ---
 if not st.session_state['logged_in']:
     st.markdown("""<style>.stApp {background-color: #1a2639;} h1 {color: white; text-align: center;}</style>""", unsafe_allow_html=True)
     st.title("🔒 Espace RH")
     c1,c2,c3 = st.columns([1,1,1])
     with c2:
-        st.text_input("ID", key="username")
-        st.text_input("MDP", type="password", key="password")
-        st.button("Connexion", on_click=check_login)
-    st.stop()
+        # On utilise des clés temporaires (input_*) pour éviter les conflits
+        st.text_input("Identifiant", key="input_user")
+        st.text_input("Mot de passe", type="password", key="input_password")
+        st.button("Se connecter", on_click=check_login)
+    st.stop() # On arrête tout ici si pas connecté
+
+# =========================================================
+# --- LE DASHBOARD (Une fois connecté) ---
+# =========================================================
 
 # --- DESIGN ---
 st.markdown("""
@@ -39,14 +60,17 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
+# BARRE LATÉRALE
 with st.sidebar:
-    st.write(f"👤 **{st.session_state['username']}**")
+    # On utilise .get() pour être sûr que ça ne plante jamais
+    user_display = st.session_state.get('username', 'Admin')
+    st.write(f"👤 **{user_display}**")
     if st.button("Déconnexion"): logout()
     st.markdown("---")
 
 st.title("🚀 Pilotage Stratégique : RH & Finances")
 
-# --- FONCTIONS ---
+# --- FONCTIONS DASHBOARD ---
 def create_pdf(emp, form_hist):
     pdf = FPDF()
     pdf.add_page()
@@ -54,19 +78,16 @@ def create_pdf(emp, form_hist):
     pdf.set_font("Arial", 'B', 16)
     pdf.cell(200, 10, txt=f"Fiche : {emp['Nom']}", ln=True, align='C')
     pdf.ln(10)
-    
     pdf.set_font("Arial", size=12)
     pdf.cell(200, 10, txt=f"Poste : {emp['Poste']} ({emp.get('CSP', 'N/A')})", ln=True)
     pdf.cell(200, 10, txt=f"Service : {emp['Service']}", ln=True)
     pdf.cell(200, 10, txt=f"Ancienneté : {emp.get('Ancienneté (ans)', 0):.1f} ans", ln=True)
     pdf.ln(10)
-    
     pdf.set_font("Arial", 'B', 14)
     pdf.cell(200, 10, txt="Rémunération", ln=True)
     pdf.set_font("Arial", size=12)
     pdf.cell(200, 10, txt=f"Salaire Base : {emp.get('Salaire (€)', 0):.0f} EUR", ln=True)
     pdf.cell(200, 10, txt=f"Primes : {emp.get('Primes (€)', 0):.0f} EUR", ln=True)
-    
     pdf.ln(10)
     pdf.set_font("Arial", 'B', 14)
     pdf.cell(200, 10, txt="Formations", ln=True)
@@ -76,7 +97,6 @@ def create_pdf(emp, form_hist):
             pdf.cell(200, 10, txt=f"- {row['Type Formation']} ({row['Coût Formation (€)']} EUR)", ln=True)
     else:
         pdf.cell(200, 10, txt="Aucune formation.", ln=True)
-        
     return pdf.output(dest='S').encode('latin-1')
 
 def clean_chart(fig):
@@ -130,7 +150,7 @@ def charger_donnees():
         for col in ['Date Ouverture Poste', 'Date Clôture Poste']:
             if col in df_rec.columns: df_rec[col] = pd.to_datetime(df_rec[col], dayfirst=True, errors='coerce')
 
-        # Nettoyage NaN
+        # Nettoyage complet des NaN
         cols_num = ['Primes (€)', 'Salaire (€)', 'Primes Futures (€)', 'Évaluation (1-5)']
         for c in cols_num:
             if c in df_global.columns: df_global[c] = df_global[c].fillna(0)
@@ -174,7 +194,7 @@ if rh is not None:
                 df_d = rh_f.groupby(['CSP', 'Poste'])['Nom'].apply(lambda x: ', '.join(x)).reset_index()
                 st.dataframe(df_d, hide_index=True, use_container_width=True)
 
-    # 2. FICHE (BOUTON PDF DÉPLACÉ)
+    # 2. FICHE
     with tab_fiche:
         st.header("Dossier Individuel")
         liste_employes = sorted(rh_f['Nom'].unique().tolist())
@@ -182,44 +202,35 @@ if rh is not None:
         
         if choix_employe:
             emp = rh[rh['Nom'] == choix_employe].iloc[0]
-            
-            # --- LA ZONE BOUTON PDF ---
-            col_btn1, col_btn2 = st.columns([3, 1])
-            with col_btn1:
-                st.subheader(f"👤 {emp['Nom']}")
-            with col_btn2:
+            col_titre, col_btn = st.columns([3, 1])
+            with col_titre: st.subheader(f"👤 {emp['Nom']}")
+            with col_btn:
                 hist = form_detail[form_detail['Nom'] == choix_employe] if not form_detail.empty else pd.DataFrame()
                 try:
                     pdf_data = create_pdf(emp, hist)
                     st.download_button(label="📥 TÉLÉCHARGER FICHE PDF", data=pdf_data, file_name=f"Fiche_{emp['Nom']}.pdf", mime="application/pdf", use_container_width=True)
-                except Exception as e:
-                    st.error("Erreur PDF (vérifiez les accents)")
-            # --------------------------
+                except Exception as e: st.error("Erreur PDF")
 
             col_id1, col_id2, col_id3, col_id4 = st.columns(4)
             col_id1.info(f"**Poste :** {emp['Poste']}")
             col_id2.info(f"**Service :** {emp['Service']}")
             col_id3.info(f"**Ancienneté :** {emp.get('Ancienneté (ans)', 0):.1f} ans")
             col_id4.info(f"**CSP :** {emp.get('CSP', 'N/A')}")
-            
             st.markdown("---")
             c1, c2 = st.columns([2, 1])
             with c1:
                 sal = emp.get('Salaire (€)', 0)
                 prime_act = emp.get('Primes (€)', 0)
                 prime_fut = emp.get('Primes Futures (€)', 0)
-                
                 k1, k2, k3 = st.columns(3)
                 k1.metric("Base", f"{sal:,.0f} €")
                 k2.metric("Primes", f"{prime_act:,.0f} €")
                 k3.metric("Futur", f"{prime_fut:,.0f} €", delta="Prévu")
                 st.plotly_chart(clean_chart(px.bar(x=['Actuel', 'Projeté'], y=[sal+prime_act, sal+prime_act+prime_fut], title="Trajectoire", text_auto=True)), use_container_width=True)
-
             with c2:
                 st.subheader("Statut")
                 if str(emp.get('Au SMIC', 'No')).lower() == 'oui': st.markdown('<div class="smic-alert">⚠️ Au SMIC</div>', unsafe_allow_html=True)
                 else: st.success("✅ Conforme")
-
             st.subheader("🎓 Formations")
             if not hist.empty: st.dataframe(hist[['Type Formation', 'Coût Formation (€)']], hide_index=True, use_container_width=True)
             else: st.info("Aucune.")
