@@ -9,7 +9,7 @@ from google.oauth2.service_account import Credentials
 import google.generativeai as genai
 
 # Configuration
-st.set_page_config(page_title="Dashboard RH", layout="wide")
+st.set_page_config(page_title="Dashboard RH Pro", layout="wide")
 
 # --- 1. AUTHENTIFICATION GOOGLE SHEETS ---
 def connect_google_sheet():
@@ -24,7 +24,7 @@ def connect_google_sheet():
         st.error(f"⚠️ Erreur connexion Google : {e}")
         st.stop()
 
-# --- 2. CONFIGURATION IA (GEMINI) ---
+# --- 2. CONFIGURATION IA (GEMINI PRO) ---
 def configure_gemini():
     try:
         if "gemini" in st.secrets and "api_key" in st.secrets["gemini"]:
@@ -36,12 +36,12 @@ def configure_gemini():
 
 def ask_gemini(prompt):
     try:
-        # On utilise le modèle 1.5 Flash (Plus rapide et stable)
-        model = genai.GenerativeModel('gemini-1.5-flash')
+        # RETOUR AU MODELE STABLE 'gemini-pro'
+        model = genai.GenerativeModel('gemini-pro')
         response = model.generate_content(prompt)
         return response.text
     except Exception as e:
-        return f"L'assistant est indisponible pour le moment ({e})."
+        return f"L'assistant est indisponible : {e}"
 
 # --- 3. LOGIN ---
 if 'logged_in' not in st.session_state: st.session_state['logged_in'] = False
@@ -182,14 +182,15 @@ def charger_donnees():
         for col in ['Date Ouverture Poste', 'Date Clôture Poste']:
             if col in df_rec.columns: df_rec[col] = pd.to_datetime(df_rec[col], dayfirst=True, errors='coerce')
         
-        cols_num = ['Primes (€)', 'Salaire (€)', 'Primes Futures (€)', 'Évaluation (1-5)', 'Coût Recrutement (€)']
+        cols_num = ['Primes (€)', 'Salaire (€)', 'Primes Futures (€)', 'Évaluation (1-5)']
         for c in cols_num:
             if c in df_global.columns: 
                 df_global[c] = df_global[c].apply(clean_currency)
                 df_global[c] = pd.to_numeric(df_global[c], errors='coerce').fillna(0)
-            if c in df_rec.columns:
-                df_rec[c] = df_rec[c].apply(clean_currency)
-                df_rec[c] = pd.to_numeric(df_rec[c], errors='coerce').fillna(0)
+
+        if 'Coût Recrutement (€)' in df_rec.columns:
+            df_rec['Coût Recrutement (€)'] = df_rec['Coût Recrutement (€)'].apply(clean_currency)
+            df_rec['Coût Recrutement (€)'] = pd.to_numeric(df_rec['Coût Recrutement (€)'], errors='coerce').fillna(0)
 
         if 'Au SMIC' not in df_global.columns: df_global['Au SMIC'] = 'Non'
         if 'Catégorie Métier' not in df_global.columns: df_global['Catégorie Métier'] = 'Non défini'
@@ -213,46 +214,54 @@ if rh is not None:
         form_f = form_detail[form_detail['Service'] == filtre_service]
     else: form_f = form_detail
 
-    # TABS (L'Assistant IA est en premier)
     tab_ia, tab_metier, tab_fiche, tab_rem, tab_form, tab_rec, tab_budget, tab_simul = st.tabs([
         "🤖 Assistant", "📂 Métiers", "🔍 Fiche", "📈 Rémunération", "🎓 Formation", "🎯 Recrutement", "💰 Budget", "🔮 Simulation"
     ])
 
-    # --- 0. ASSISTANT IA (CORRIGÉ & PROPRE) ---
+    # --- 0. ASSISTANT IA (INTELLIGENT & JURIDIQUE) ---
     with tab_ia:
-        st.header("🤖 Assistant Virtuel RH")
+        st.header("🤖 Assistant Expert RH")
         if configure_gemini():
-            if "messages" not in st.session_state: st.session_state.messages = []
+            st.info("Posez une question sur vos données (ex: 'Masse salariale ?') ou une question générale (ex: 'Délai préavis démission ?').")
             
-            # Affichage historique
+            if "messages" not in st.session_state: st.session_state.messages = []
             for msg in st.session_state.messages:
                 with st.chat_message(msg["role"]): st.markdown(msg["content"])
 
-            # Input
-            if prompt := st.chat_input("Posez votre question sur les données..."):
+            if prompt := st.chat_input("Votre question..."):
                 st.session_state.messages.append({"role": "user", "content": prompt})
                 with st.chat_message("user"): st.markdown(prompt)
                 
-                # Contexte Data
+                # CONTEXTE ENRICHI POUR L'IA
                 contexte = f"""
-                Agis comme un DRH expert. Analyse ces données :
-                - Effectif total : {len(rh)} employés.
-                - Masse salariale mensuelle : {rh['Salaire (€)'].sum():,.0f} €.
-                - Liste employés et salaires : {rh[['Nom', 'Poste', 'Service', 'Salaire (€)', 'CSP']].to_string()}
+                Tu es un Assistant Expert RH. Tu as deux sources de connaissances :
+                
+                1. LES DONNÉES DE L'ENTREPRISE (CI-DESSOUS) :
+                - Effectif total : {len(rh)} employés
+                - Masse salariale mensuelle : {rh['Salaire (€)'].sum():,.0f} €
+                - Liste complète des employés (Nom, Poste, Salaire) : {rh[['Nom', 'Poste', 'Service', 'Salaire (€)']].to_string()}
                 - Recrutements en cours : {rec[['Poste', 'Coût Recrutement (€)']].to_string() if not rec.empty else 'Aucun'}
                 
-                Question de l'utilisateur : {prompt}
-                Réponds de manière courte et professionnelle.
+                2. TES CONNAISSANCES GÉNÉRALES :
+                - Droit du travail français.
+                - Bonnes pratiques RH.
+                - Actualités juridiques.
+
+                INSTRUCTIONS :
+                - Si l'utilisateur demande un chiffre ou une info sur l'entreprise, utilise les DONNÉES ci-dessus.
+                - Si l'utilisateur pose une question générale (loi, définition, conseil), utilise tes CONNAISSANCES GÉNÉRALES sans inventer de données d'entreprise.
+                - Sois concis et professionnel.
+                
+                Question : {prompt}
                 """
                 
                 reply = ask_gemini(contexte)
                 with st.chat_message("assistant"): st.markdown(reply)
                 st.session_state.messages.append({"role": "assistant", "content": reply})
         else:
-            st.info("💡 Pour activer l'IA, ajoutez votre clé Gemini dans les secrets.")
+            st.warning("⚠️ Clé Gemini non configurée dans secrets.toml")
 
-    # [LES AUTRES ONGLETS RESTENT PARFAITS]
-    
+    # [RESTE DU CODE INCHANGÉ...]
     with tab_metier:
         st.header("Cartographie Métiers")
         c1, c2 = st.columns([1, 1])
