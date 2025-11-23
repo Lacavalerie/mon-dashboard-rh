@@ -6,12 +6,11 @@ from datetime import datetime
 from fpdf import FPDF
 import gspread
 from google.oauth2.service_account import Credentials
-import google.generativeai as genai
 
 # Configuration
-st.set_page_config(page_title="Dashboard V55", layout="wide")
+st.set_page_config(page_title="Pilotage RH", layout="wide")
 
-# --- 1. AUTH GOOGLE SHEETS ---
+# --- 1. AUTHENTIFICATION GOOGLE SHEETS ---
 def connect_google_sheet():
     try:
         secrets = st.secrets["gcp_service_account"]
@@ -21,30 +20,10 @@ def connect_google_sheet():
         sheet = client.open("Dashboard_Data") 
         return sheet
     except Exception as e:
-        st.error(f"⚠️ Erreur Google Sheets : {e}")
+        st.error(f"⚠️ Erreur connexion Google : {e}")
         st.stop()
 
-# --- 2. IA (VERSION DIAGNOSTIC) ---
-def configure_gemini():
-    try:
-        if "gemini" in st.secrets and "api_key" in st.secrets["gemini"]:
-            api_key = st.secrets["gemini"]["api_key"]
-            genai.configure(api_key=api_key)
-            return True
-        return False
-    except: return False
-
-def ask_gemini(prompt):
-    # On essaie le modèle standard actuel
-    try:
-        model = genai.GenerativeModel('gemini-1.5-flash')
-        response = model.generate_content(prompt)
-        return response.text
-    except Exception as e:
-        # Si ça plante, on renvoie l'erreur exacte pour comprendre
-        return f"ERREUR TECHNIQUE : {e}"
-
-# --- 3. LOGIN ---
+# --- 2. LOGIN SÉCURISÉ ---
 if 'logged_in' not in st.session_state: st.session_state['logged_in'] = False
 if 'username' not in st.session_state: st.session_state['username'] = ""
 
@@ -54,7 +33,7 @@ def check_login():
     if user == "admin" and pwd == "rh123":
         st.session_state['logged_in'] = True
         st.session_state['username'] = user
-    else: st.error("Erreur login")
+    else: st.error("Identifiant incorrect")
 
 def logout():
     st.session_state['logged_in'] = False
@@ -65,12 +44,12 @@ if not st.session_state['logged_in']:
     st.title("🔒 Portail RH")
     c1,c2,c3 = st.columns([1,1,1])
     with c2:
-        st.text_input("ID", key="input_user")
-        st.text_input("MDP", type="password", key="input_password")
+        st.text_input("Identifiant", key="input_user")
+        st.text_input("Mot de passe", type="password", key="input_password")
         st.button("Connexion", on_click=check_login)
     st.stop()
 
-# --- 4. DESIGN ---
+# --- 3. DESIGN ---
 st.markdown("""
     <style>
     .stApp { background-color: #1a2639; }
@@ -79,7 +58,6 @@ st.markdown("""
     [data-testid="stMetric"] { background-color: #2d3e55; border-radius: 8px; border-left: 5px solid #4ade80; }
     [data-testid="stMetricValue"] { color: #FFFFFF !important; }
     .smic-alert { background-color: #7f1d1d; color: white; padding: 10px; border-radius: 5px; border: 1px solid #ef4444; }
-    .stChatMessage { background-color: #2d3e55; border-radius: 10px; }
     </style>
 """, unsafe_allow_html=True)
 
@@ -90,7 +68,7 @@ with st.sidebar:
 
 st.title("🚀 Pilotage Stratégique : RH & Finances")
 
-# --- 5. FONCTIONS UTILES ---
+# --- 4. FONCTIONS UTILES ---
 def create_pdf(emp, form_hist):
     pdf = FPDF()
     pdf.add_page()
@@ -145,7 +123,7 @@ def calculer_donnees_rh(df):
         df['Écart Svc'] = df['Salaire (€)'] - df['Moyenne Svc']
     return df
 
-# --- 6. CHARGEMENT ---
+# --- 5. CHARGEMENT ---
 @st.cache_data(ttl=60)
 def charger_donnees():
     try:
@@ -215,42 +193,10 @@ if rh is not None:
         form_f = form_detail[form_detail['Service'] == filtre_service]
     else: form_f = form_detail
 
-    tab_ia, tab_metier, tab_fiche, tab_rem, tab_form, tab_rec, tab_budget, tab_simul = st.tabs([
-        "🤖 Assistant", "📂 Métiers", "🔍 Fiche", "📈 Rémunération", "🎓 Formation", "🎯 Recrutement", "💰 Budget", "🔮 Simulation"
+    tab_metier, tab_fiche, tab_rem, tab_form, tab_rec, tab_budget, tab_simul = st.tabs([
+        "📂 Métiers", "🔍 Fiche Employé", "📈 Rémunération", "🎓 Formation", "🎯 Recrutement", "💰 Budget", "🔮 Simulation"
     ])
 
-    with tab_ia:
-        st.header("🤖 Assistant Expert RH")
-        if configure_gemini():
-            st.info("Posez une question RH.")
-            if "messages" not in st.session_state: st.session_state.messages = []
-            for msg in st.session_state.messages:
-                with st.chat_message(msg["role"]): st.markdown(msg["content"])
-
-            if prompt := st.chat_input("Votre question..."):
-                st.session_state.messages.append({"role": "user", "content": prompt})
-                with st.chat_message("user"): st.markdown(prompt)
-                
-                contexte = f"""
-                Tu es un Assistant Expert RH.
-                DONNÉES :
-                - Effectif : {len(rh)}
-                - Masse salariale : {rh['Salaire (€)'].sum():,.0f} €
-                - Employés : {rh[['Nom', 'Poste', 'Salaire (€)', 'CSP']].to_string()}
-                - Recrutements : {rec[['Poste', 'Coût Recrutement (€)']].to_string() if not rec.empty else 'Aucun'}
-                
-                Question : {prompt}
-                """
-                
-                reply = ask_gemini(contexte)
-                with st.chat_message("assistant"): st.markdown(reply)
-                st.session_state.messages.append({"role": "assistant", "content": reply})
-        else:
-            st.warning("⚠️ Clé Gemini non configurée")
-
-    # ... [Les autres onglets restent inchangés par rapport à la V51] ...
-    # (Je raccourcis ici pour la clarté, mais garde bien tout le reste du code !)
-    
     with tab_metier:
         st.header("Cartographie Métiers")
         c1, c2 = st.columns([1, 1])
