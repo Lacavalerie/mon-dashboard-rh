@@ -7,23 +7,24 @@ from fpdf import FPDF
 import gspread
 from google.oauth2.service_account import Credentials
 
-# Configuration
-st.set_page_config(page_title="Dashboard RH: Stable", layout="wide")
+# --- CONFIGURATION ---
+st.set_page_config(page_title="Dashboard RH (Stable)", layout="wide")
 
-# --- AUTH GOOGLE SHEETS ---
+# --- 1. AUTHENTIFICATION GOOGLE ---
 def connect_google_sheet():
     try:
         secrets = st.secrets["gcp_service_account"]
         scope = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
         creds = Credentials.from_service_account_info(secrets, scopes=scope)
         client = gspread.authorize(creds)
+        # Met l'ID de ton Google Sheet ou son Nom exact
         sheet = client.open("Dashboard_Data") 
         return sheet
     except Exception as e:
-        st.error(f"⚠️ Erreur connexion Google Sheets : {e}")
+        st.error(f"⚠️ Erreur connexion Google : {e}")
         st.stop()
 
-# --- LOGIN ---
+# --- 2. LOGIN SÉCURISÉ ---
 if 'logged_in' not in st.session_state: st.session_state['logged_in'] = False
 if 'username' not in st.session_state: st.session_state['username'] = ""
 
@@ -41,7 +42,7 @@ def logout():
 
 if not st.session_state['logged_in']:
     st.markdown("""<style>.stApp {background-color: #1a2639;} h1 {color: white; text-align: center;}</style>""", unsafe_allow_html=True)
-    st.title("🔒 Espace RH (Cloud)")
+    st.title("🔒 Espace RH")
     c1,c2,c3 = st.columns([1,1,1])
     with c2:
         st.text_input("ID", key="input_user")
@@ -49,7 +50,7 @@ if not st.session_state['logged_in']:
         st.button("Connexion", on_click=check_login)
     st.stop()
 
-# --- DESIGN ---
+# --- 3. DESIGN ---
 st.markdown("""
     <style>
     .stApp { background-color: #1a2639; }
@@ -68,7 +69,7 @@ with st.sidebar:
 
 st.title("🚀 Pilotage Stratégique : RH & Finances")
 
-# --- FONCTIONS ---
+# --- 4. FONCTIONS UTILES ---
 def create_pdf(emp, form_hist):
     pdf = FPDF()
     pdf.add_page()
@@ -94,7 +95,7 @@ def create_pdf(emp, form_hist):
         for i, row in form_hist.iterrows():
             txt = f"- {row['Type Formation']} ({row['Coût Formation (€)']} EUR)"
             try: pdf.cell(200, 10, txt=txt.encode('latin-1', 'replace').decode('latin-1'), ln=True)
-            except: pdf.cell(200, 10, txt="Erreur encodage texte formation", ln=True)
+            except: pdf.cell(200, 10, txt="Erreur encodage", ln=True)
     else:
         pdf.cell(200, 10, txt="Aucune formation.", ln=True)
     return pdf.output(dest='S').encode('latin-1')
@@ -102,6 +103,12 @@ def create_pdf(emp, form_hist):
 def clean_chart(fig):
     fig.update_layout(paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)", font=dict(color="white"), xaxis=dict(showgrid=False, color="white"), yaxis=dict(showgrid=True, gridcolor="#444444", color="white"))
     return fig
+
+def clean_currency(val):
+    """Nettoie les 2 000,00 € en 2000.00"""
+    if isinstance(val, str):
+        val = val.replace('€', '').replace('\xa0', '').replace(' ', '').replace(',', '.')
+    return val
 
 def calculer_donnees_rh(df):
     today = datetime.now()
@@ -118,44 +125,40 @@ def calculer_donnees_rh(df):
         df['Écart Svc'] = df['Salaire (€)'] - df['Moyenne Svc']
     return df
 
-def clean_currency(val):
-    if isinstance(val, str):
-        val = val.replace('€', '').replace('\xa0', '').replace(' ', '').replace(',', '.')
-    return val
-
+# --- 5. CHARGEMENT DONNÉES ---
 @st.cache_data(ttl=60)
 def charger_donnees():
     try:
         sheet = connect_google_sheet()
         
+        # Lecture brute
         df_social = pd.DataFrame(sheet.worksheet('Données Sociales').get_all_records())
         df_sal = pd.DataFrame(sheet.worksheet('Salaires').get_all_records())
         df_form = pd.DataFrame(sheet.worksheet('Formation').get_all_records())
         df_rec = pd.DataFrame(sheet.worksheet('Recrutement').get_all_records())
         df_fin = pd.DataFrame(sheet.worksheet('Finances').get_all_records())
 
+        # Nettoyage titres colonnes
         for df in [df_social, df_sal, df_form, df_rec, df_fin]:
             df.columns = [c.strip() for c in df.columns]
 
+        # Corrections orthographe Excel
         if 'Primes(€)' in df_sal.columns: df_sal.rename(columns={'Primes(€)': 'Primes (€)'}, inplace=True)
         if 'Cout Formation (€)' in df_form.columns: df_form.rename(columns={'Cout Formation (€)': 'Coût Formation (€)'}, inplace=True)
         if 'Coût Formation' in df_form.columns: df_form.rename(columns={'Coût Formation': 'Coût Formation (€)'}, inplace=True)
         if 'Type de Formation' in df_form.columns: df_form.rename(columns={'Type de Formation': 'Type Formation'}, inplace=True)
 
+        # Fusion Globale
         if 'Nom' in df_social.columns and 'Nom' in df_sal.columns:
             df_global = pd.merge(df_social, df_sal, on='Nom', how='left')
         else: return None, None, None, None
 
-        # Nettoyage Chiffres
-        if 'Coût Formation (€)' in df_form.columns:
+        # Fusion Formation
+        if 'Nom' in df_form.columns and 'Coût Formation (€)' in df_form.columns:
+            # Nettoyage Monétaire Formation
             df_form['Coût Formation (€)'] = df_form['Coût Formation (€)'].apply(clean_currency)
             df_form['Coût Formation (€)'] = pd.to_numeric(df_form['Coût Formation (€)'], errors='coerce').fillna(0)
-        
-        if 'Coût Recrutement (€)' in df_rec.columns:
-            df_rec['Coût Recrutement (€)'] = df_rec['Coût Recrutement (€)'].apply(clean_currency)
-            df_rec['Coût Recrutement (€)'] = pd.to_numeric(df_rec['Coût Recrutement (€)'], errors='coerce').fillna(0)
-
-        if 'Nom' in df_form.columns and 'Coût Formation (€)' in df_form.columns:
+            
             df_formation_detail = pd.merge(df_form, df_social[['Nom', 'Service', 'CSP']], on='Nom', how='left')
             form_group = df_form.groupby('Nom')['Coût Formation (€)'].sum().reset_index()
             df_global = pd.merge(df_global, form_group, on='Nom', how='left')
@@ -164,9 +167,15 @@ def charger_donnees():
             df_global['Coût Formation (€)'] = 0
             df_formation_detail = pd.DataFrame()
 
+        # Nettoyage Recrutement
         for col in ['Date Ouverture Poste', 'Date Clôture Poste']:
             if col in df_rec.columns: df_rec[col] = pd.to_datetime(df_rec[col], dayfirst=True, errors='coerce')
         
+        if 'Coût Recrutement (€)' in df_rec.columns:
+            df_rec['Coût Recrutement (€)'] = df_rec['Coût Recrutement (€)'].apply(clean_currency)
+            df_rec['Coût Recrutement (€)'] = pd.to_numeric(df_rec['Coût Recrutement (€)'], errors='coerce').fillna(0)
+
+        # Nettoyage Global
         cols_num = ['Primes (€)', 'Salaire (€)', 'Primes Futures (€)', 'Évaluation (1-5)']
         for c in cols_num:
             if c in df_global.columns: 
@@ -187,6 +196,7 @@ rh, fin, rec, form_detail = charger_donnees()
 
 if rh is not None:
     
+    # FILTRES
     st.sidebar.header("Filtres")
     liste_services = ['Tous'] + sorted(rh['Service'].unique().tolist()) if 'Service' in rh.columns else ['Tous']
     filtre_service = st.sidebar.selectbox("Service", liste_services)
@@ -195,10 +205,12 @@ if rh is not None:
         form_f = form_detail[form_detail['Service'] == filtre_service]
     else: form_f = form_detail
 
+    # ONGLETS
     tab_metier, tab_fiche, tab_rem, tab_form, tab_rec, tab_budget, tab_simul = st.tabs([
         "📂 Métiers", "🔍 Fiche Employé", "📈 Rémunération", "🎓 Formation", "🎯 Recrutement", "💰 Budget", "🔮 Simulation"
     ])
 
+    # --- CONTENU ---
     with tab_metier:
         st.header("Cartographie Métiers")
         c1, c2 = st.columns([1, 1])
@@ -226,7 +238,6 @@ if rh is not None:
                     pdf_data = create_pdf(emp, hist)
                     st.download_button(label="📥 TÉLÉCHARGER PDF", data=pdf_data, file_name=f"Fiche_{emp['Nom']}.pdf", mime="application/pdf", use_container_width=True)
                 except Exception as e: st.error(f"Erreur PDF: {e}")
-
             col_id1, col_id2, col_id3, col_id4 = st.columns(4)
             col_id1.info(f"**Poste :** {emp['Poste']}")
             col_id2.info(f"**Service :** {emp['Service']}")
