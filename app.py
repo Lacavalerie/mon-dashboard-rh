@@ -6,10 +6,10 @@ from datetime import datetime
 from fpdf import FPDF
 import gspread
 from google.oauth2.service_account import Credentials
-import time # Nécessaire pour le rechargement
+import time
 
 # Configuration
-st.set_page_config(page_title="Dashboard RH (Saisie)", layout="wide")
+st.set_page_config(page_title="Dashboard RH V47", layout="wide")
 
 # --- 1. AUTHENTIFICATION GOOGLE ---
 def connect_google_sheet():
@@ -62,13 +62,12 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-# --- BARRE LATÉRALE (AVEC FORMULAIRE D'AJOUT) ---
+# --- BARRE LATÉRALE (SAISIE) ---
 with st.sidebar:
     st.write(f"👤 **{st.session_state.get('username', 'Admin')}**")
     if st.button("Déconnexion"): logout()
     st.markdown("---")
     
-    # --- NOUVEAU : FORMULAIRE D'AJOUT ---
     with st.expander("➕ Ajouter un Salarié", expanded=False):
         with st.form("add_employee"):
             new_nom = st.text_input("Nom Prénom")
@@ -77,24 +76,21 @@ with st.sidebar:
             new_csp = st.selectbox("CSP", ["Cadre", "Employé", "ETAM", "Cadre Sup"])
             new_salaire = st.number_input("Salaire (€)", value=2000, step=100)
             
-            submitted = st.form_submit_button("Valider l'embauche")
+            submitted = st.form_submit_button("Valider")
             
             if submitted and new_nom:
                 try:
                     sheet = connect_google_sheet()
-                    # 1. Ajout dans Données Sociales (Nom, Poste, Service, CSP...)
-                    # On met des valeurs vides "" pour les dates qu'on ne connait pas encore
                     sheet.worksheet('Données Sociales').append_row([new_nom, new_poste, new_service, new_csp, "", "", "", "", "", ""])
-                    
-                    # 2. Ajout dans Salaires (Nom, Salaire...)
                     sheet.worksheet('Salaires').append_row([new_nom, new_salaire, 0, 0, "Non"])
-                    
                     st.success(f"{new_nom} ajouté !")
-                    st.cache_data.clear() # On vide le cache pour voir le nouveau salarié
+                    st.cache_data.clear()
                     time.sleep(1)
-                    st.rerun() # On recharge la page
+                    st.rerun()
                 except Exception as e:
                     st.error(f"Erreur : {e}")
+
+st.title("🚀 Pilotage Stratégique : RH & Finances")
 
 # --- 4. FONCTIONS ---
 def create_pdf(emp, form_hist):
@@ -131,10 +127,23 @@ def clean_chart(fig):
     fig.update_layout(paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)", font=dict(color="white"), xaxis=dict(showgrid=False, color="white"), yaxis=dict(showgrid=True, gridcolor="#444444", color="white"))
     return fig
 
+# --- NETTOYEUR RENFORCÉ ---
 def clean_currency(val):
+    """Nettoie tout format monétaire en nombre pur"""
+    if pd.isna(val) or val == "":
+        return 0
+    if isinstance(val, (int, float)):
+        return val
     if isinstance(val, str):
-        val = val.replace('€', '').replace('\xa0', '').replace(' ', '').replace(',', '.')
-    return val
+        # Enlève €, espaces, espaces insécables
+        val = val.replace('€', '').replace(' ', '').replace('\xa0', '')
+        # Remplace virgule par point
+        val = val.replace(',', '.')
+        try:
+            return float(val)
+        except:
+            return 0
+    return 0
 
 def calculer_donnees_rh(df):
     today = datetime.now()
@@ -151,7 +160,7 @@ def calculer_donnees_rh(df):
         df['Écart Svc'] = df['Salaire (€)'] - df['Moyenne Svc']
     return df
 
-# --- 5. CHARGEMENT ---
+# --- 5. CHARGEMENT ET NETTOYAGE ---
 @st.cache_data(ttl=60)
 def charger_donnees():
     try:
@@ -175,9 +184,13 @@ def charger_donnees():
             df_global = pd.merge(df_social, df_sal, on='Nom', how='left')
         else: return None, None, None, None
 
-        if 'Nom' in df_form.columns and 'Coût Formation (€)' in df_form.columns:
+        # --- APPLICATION DU NETTOYAGE SUR TOUS LES CHIFFRES ---
+        
+        # 1. Formation
+        if 'Coût Formation (€)' in df_form.columns:
             df_form['Coût Formation (€)'] = df_form['Coût Formation (€)'].apply(clean_currency)
-            df_form['Coût Formation (€)'] = pd.to_numeric(df_form['Coût Formation (€)'], errors='coerce').fillna(0)
+            
+        if 'Nom' in df_form.columns and 'Coût Formation (€)' in df_form.columns:
             df_formation_detail = pd.merge(df_form, df_social[['Nom', 'Service', 'CSP']], on='Nom', how='left')
             form_group = df_form.groupby('Nom')['Coût Formation (€)'].sum().reset_index()
             df_global = pd.merge(df_global, form_group, on='Nom', how='left')
@@ -186,14 +199,17 @@ def charger_donnees():
             df_global['Coût Formation (€)'] = 0
             df_formation_detail = pd.DataFrame()
 
+        # 2. Recrutement (C'est là que ça plantait)
         for col in ['Date Ouverture Poste', 'Date Clôture Poste']:
             if col in df_rec.columns: df_rec[col] = pd.to_datetime(df_rec[col], dayfirst=True, errors='coerce')
         
+        if 'Coût Recrutement (€)' in df_rec.columns:
+            df_rec['Coût Recrutement (€)'] = df_rec['Coût Recrutement (€)'].apply(clean_currency)
+
+        # 3. Global
         cols_num = ['Primes (€)', 'Salaire (€)', 'Primes Futures (€)', 'Évaluation (1-5)']
         for c in cols_num:
-            if c in df_global.columns: 
-                df_global[c] = df_global[c].apply(clean_currency)
-                df_global[c] = pd.to_numeric(df_global[c], errors='coerce').fillna(0)
+            if c in df_global.columns: df_global[c] = df_global[c].apply(clean_currency)
 
         if 'Au SMIC' not in df_global.columns: df_global['Au SMIC'] = 'Non'
         if 'Catégorie Métier' not in df_global.columns: df_global['Catégorie Métier'] = 'Non défini'
@@ -218,7 +234,7 @@ if rh is not None:
     else: form_f = form_detail
 
     tab_metier, tab_fiche, tab_rem, tab_form, tab_rec, tab_budget, tab_simul = st.tabs([
-        "📂 Métiers", "🔍 Fiche Employé", "📈 Rémunération", "🎓 Formation", "🎯 Recrutement", "💰 Budget", "🔮 Simulation"
+        "📂 Métiers", "🔍 Fiche", "📈 Rémunération", "🎓 Formation", "🎯 Recrutement", "💰 Budget", "🔮 Simulation"
     ])
 
     with tab_metier:
@@ -303,8 +319,10 @@ if rh is not None:
         if 'Date Clôture Poste' in rec.columns and 'Date Ouverture Poste' in rec.columns:
              rec['Temps'] = (rec['Date Clôture Poste'] - rec['Date Ouverture Poste']).dt.days
              avg_time = rec['Temps'].mean()
+        
         total_cout_rec = rec['Coût Recrutement (€)'].sum() if 'Coût Recrutement (€)' in rec.columns else 0
         nb_candidats = rec['Nombre Candidats'].sum() if 'Nombre Candidats' in rec.columns else 0
+        
         c1, c2, c3 = st.columns(3)
         c1.metric("Temps Moyen", f"{avg_time:.0f} jours")
         c2.metric("Coût Total", f"{total_cout_rec:,.0f} €")
