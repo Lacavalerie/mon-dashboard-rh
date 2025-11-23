@@ -24,7 +24,7 @@ def connect_google_sheet():
         st.error(f"⚠️ Erreur connexion Google : {e}")
         st.stop()
 
-# --- 2. CONFIGURATION IA (GEMINI PRO) ---
+# --- 2. CONFIGURATION IA (GEMINI 1.5 FLASH) ---
 def configure_gemini():
     try:
         if "gemini" in st.secrets and "api_key" in st.secrets["gemini"]:
@@ -36,12 +36,12 @@ def configure_gemini():
 
 def ask_gemini(prompt):
     try:
-        # RETOUR AU MODELE STABLE 'gemini-pro'
-        model = genai.GenerativeModel('gemini-pro')
+        # UTILISATION DU DERNIER MODÈLE STABLE
+        model = genai.GenerativeModel('gemini-1.5-flash')
         response = model.generate_content(prompt)
         return response.text
     except Exception as e:
-        return f"L'assistant est indisponible : {e}"
+        return f"L'assistant est indisponible (Erreur modèle) : {e}"
 
 # --- 3. LOGIN ---
 if 'logged_in' not in st.session_state: st.session_state['logged_in'] = False
@@ -218,11 +218,11 @@ if rh is not None:
         "🤖 Assistant", "📂 Métiers", "🔍 Fiche", "📈 Rémunération", "🎓 Formation", "🎯 Recrutement", "💰 Budget", "🔮 Simulation"
     ])
 
-    # --- 0. ASSISTANT IA (INTELLIGENT & JURIDIQUE) ---
+    # --- 0. ASSISTANT IA (MODÈLE FLASH) ---
     with tab_ia:
         st.header("🤖 Assistant Expert RH")
         if configure_gemini():
-            st.info("Posez une question sur vos données (ex: 'Masse salariale ?') ou une question générale (ex: 'Délai préavis démission ?').")
+            st.info("Posez une question sur vos données ou sur le droit du travail.")
             
             if "messages" not in st.session_state: st.session_state.messages = []
             for msg in st.session_state.messages:
@@ -232,25 +232,18 @@ if rh is not None:
                 st.session_state.messages.append({"role": "user", "content": prompt})
                 with st.chat_message("user"): st.markdown(prompt)
                 
-                # CONTEXTE ENRICHI POUR L'IA
                 contexte = f"""
-                Tu es un Assistant Expert RH. Tu as deux sources de connaissances :
+                Tu es un Assistant Expert RH.
                 
-                1. LES DONNÉES DE L'ENTREPRISE (CI-DESSOUS) :
-                - Effectif total : {len(rh)} employés
-                - Masse salariale mensuelle : {rh['Salaire (€)'].sum():,.0f} €
-                - Liste complète des employés (Nom, Poste, Salaire) : {rh[['Nom', 'Poste', 'Service', 'Salaire (€)']].to_string()}
-                - Recrutements en cours : {rec[['Poste', 'Coût Recrutement (€)']].to_string() if not rec.empty else 'Aucun'}
+                1. DONNÉES ENTREPRISE :
+                - Effectif : {len(rh)}
+                - Masse salariale : {rh['Salaire (€)'].sum():,.0f} €
+                - Employés : {rh[['Nom', 'Poste', 'Salaire (€)', 'CSP']].to_string()}
+                - Recrutements : {rec[['Poste', 'Coût Recrutement (€)']].to_string() if not rec.empty else 'Aucun'}
                 
-                2. TES CONNAISSANCES GÉNÉRALES :
-                - Droit du travail français.
-                - Bonnes pratiques RH.
-                - Actualités juridiques.
-
-                INSTRUCTIONS :
-                - Si l'utilisateur demande un chiffre ou une info sur l'entreprise, utilise les DONNÉES ci-dessus.
-                - Si l'utilisateur pose une question générale (loi, définition, conseil), utilise tes CONNAISSANCES GÉNÉRALES sans inventer de données d'entreprise.
-                - Sois concis et professionnel.
+                2. MISSION :
+                - Utilise les données ci-dessus si la question porte sur l'entreprise.
+                - Utilise tes connaissances générales RH/Juridiques sinon.
                 
                 Question : {prompt}
                 """
@@ -261,7 +254,7 @@ if rh is not None:
         else:
             st.warning("⚠️ Clé Gemini non configurée dans secrets.toml")
 
-    # [RESTE DU CODE INCHANGÉ...]
+    # [RESTE DES ONGLETS IDENTIQUE]
     with tab_metier:
         st.header("Cartographie Métiers")
         c1, c2 = st.columns([1, 1])
