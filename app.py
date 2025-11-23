@@ -10,46 +10,40 @@ import time
 from streamlit_option_menu import option_menu
 
 # Configuration
-st.set_page_config(page_title="RH Cockpit Pro", layout="wide", initial_sidebar_state="expanded")
+st.set_page_config(page_title="RH Cockpit Pro V66", layout="wide", initial_sidebar_state="expanded")
 
-# --- DESIGN "CARTES PRO" (Délimitation visuelle) ---
+# --- DESIGN "DEEP LAYERS" ---
 st.markdown("""
     <style>
-    /* Fond général */
-    .stApp { background-color: #0f172a; } /* Bleu nuit très sombre */
+    .stApp { background-color: #0b0f19; }
+    [data-testid="stSidebar"] { background-color: #111827; border-right: 1px solid #1f2937; }
+    h1, h2, h3 { color: #f3f4f6 !important; font-family: 'Segoe UI', sans-serif; }
+    p, div, label, span, li, .stMarkdown { color: #e5e7eb !important; }
     
-    /* Sidebar */
-    [data-testid="stSidebar"] { background-color: #1e293b; border-right: 1px solid #334155; }
-    
-    /* STYLE DES CARTES (Conteneurs délimités) */
     .card {
-        background-color: #1e293b;
-        padding: 20px;
+        background-color: #1f2937;
+        padding: 25px;
         border-radius: 12px;
-        border: 1px solid #334155; /* Bordure légère */
-        box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.2);
-        margin-bottom: 20px;
+        border: 1px solid #374151;
+        box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.3);
+        margin-bottom: 25px;
     }
-    
-    /* Titres dans les cartes */
     .card h3 {
-        color: #38bdf8 !important; /* Bleu clair */
-        font-size: 18px;
-        margin-bottom: 15px;
-        border-bottom: 1px solid #334155;
-        padding-bottom: 10px;
+        color: #38bdf8 !important;
+        font-size: 20px;
+        font-weight: 600;
+        margin-bottom: 20px;
+        border-bottom: 2px solid #374151;
+        padding-bottom: 12px;
     }
-    
-    /* KPIs */
-    .kpi-val { font-size: 26px; font-weight: bold; color: white; }
-    .kpi-lbl { font-size: 13px; color: #94a3b8; text-transform: uppercase; }
-
-    /* Alertes */
-    .alert-box { background-color: #450a0a; color: #fca5a5; padding: 10px; border-radius: 5px; border: 1px solid #ef4444; }
+    .kpi-val { font-size: 32px; font-weight: 800; color: #f9fafb; }
+    .kpi-lbl { font-size: 14px; color: #9ca3af; text-transform: uppercase; letter-spacing: 1px; font-weight: 600;}
+    .alert-box { background-color: rgba(127, 29, 29, 0.5); color: #fca5a5 !important; padding: 15px; border-radius: 8px; border: 1px solid #ef4444; }
+    [data-testid="stDataFrame"] { background-color: transparent !important; }
     </style>
 """, unsafe_allow_html=True)
 
-# --- FONCTIONS TECHNIQUES ---
+# --- FONCTIONS ---
 def connect_google_sheet():
     try:
         secrets = st.secrets["gcp_service_account"]
@@ -66,19 +60,17 @@ def save_data_to_google(df, worksheet_name):
         sheet = connect_google_sheet()
         ws = sheet.worksheet(worksheet_name)
         df_to_save = df.copy()
-        # Conversion dates
         for col in df_to_save.columns:
             if pd.api.types.is_datetime64_any_dtype(df_to_save[col]):
                 df_to_save[col] = df_to_save[col].dt.strftime('%d/%m/%Y')
         ws.clear()
         ws.update([df_to_save.columns.values.tolist()] + df_to_save.values.tolist())
-        st.toast(f"✅ Données sauvegardées dans {worksheet_name} !", icon="💾")
+        st.toast(f"✅ {worksheet_name} sauvegardé !", icon="💾")
         time.sleep(1)
         st.cache_data.clear()
         st.rerun()
-    except Exception as e: st.error(f"Erreur sauvegarde : {e}")
+    except Exception as e: st.error(f"Erreur : {e}")
 
-# Login
 if 'logged_in' not in st.session_state: st.session_state['logged_in'] = False
 def check_login():
     if st.session_state['u'] == "admin" and st.session_state['p'] == "rh123": st.session_state['logged_in'] = True
@@ -88,13 +80,14 @@ def logout(): st.session_state['logged_in'] = False; st.rerun()
 if not st.session_state['logged_in']:
     c1,c2,c3 = st.columns([1,1,1])
     with c2:
+        st.markdown("<div class='card'>", unsafe_allow_html=True)
         st.title("🔒 Connexion")
         st.text_input("ID", key="u")
         st.text_input("MDP", type="password", key="p")
         st.button("Entrer", on_click=check_login)
+        st.markdown("</div>", unsafe_allow_html=True)
     st.stop()
 
-# --- FONCTIONS MÉTIER ---
 def create_pdf(emp, form_hist):
     pdf = FPDF()
     pdf.add_page()
@@ -129,16 +122,14 @@ def calculer_donnees(df):
 
 def clean_chart(fig):
     fig.update_layout(
-        paper_bgcolor="rgba(0,0,0,0)", 
-        plot_bgcolor="rgba(0,0,0,0)", 
-        font=dict(color="white"),
-        margin=dict(l=10, r=10, t=30, b=10),
-        xaxis=dict(showgrid=False, color="white"),
-        yaxis=dict(showgrid=True, gridcolor="#334155", color="white")
+        paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)", font=dict(color="#e5e7eb"),
+        margin=dict(l=10, r=10, t=40, b=10),
+        xaxis=dict(showgrid=False, color="#e5e7eb"),
+        yaxis=dict(showgrid=True, gridcolor="#374151", color="#e5e7eb"),
+        legend=dict(font=dict(color="#e5e7eb"))
     )
     return fig
 
-# --- CHARGEMENT ---
 @st.cache_data(ttl=60)
 def load_data():
     try:
@@ -149,27 +140,20 @@ def load_data():
             df.columns = [c.strip() for c in df.columns]
             data[name] = df
 
-        # Corrections
         if 'Primes(€)' in data['Salaires'].columns: data['Salaires'].rename(columns={'Primes(€)': 'Primes (€)'}, inplace=True)
         if 'Cout Formation (€)' in data['Formation'].columns: data['Formation'].rename(columns={'Cout Formation (€)': 'Coût Formation (€)'}, inplace=True)
         if 'Coût Formation' in data['Formation'].columns: data['Formation'].rename(columns={'Coût Formation': 'Coût Formation (€)'}, inplace=True)
 
-        # Fusion
         df_global = pd.merge(data['Données Sociales'], data['Salaires'], on='Nom', how='left')
         
-        # Formation
         data['Formation']['Coût Formation (€)'] = data['Formation']['Coût Formation (€)'].apply(clean_currency)
         form_agg = data['Formation'].groupby('Nom')['Coût Formation (€)'].sum().reset_index()
         df_global = pd.merge(df_global, form_agg, on='Nom', how='left')
         df_global['Coût Formation (€)'] = df_global['Coût Formation (€)'].fillna(0)
         
-        # Detail
         form_detail_enrichi = pd.merge(data['Formation'], data['Données Sociales'][['Nom', 'Service', 'CSP']], on='Nom', how='left')
-
-        # Recrutement
         data['Recrutement']['Coût Recrutement (€)'] = data['Recrutement']['Coût Recrutement (€)'].apply(clean_currency)
         
-        # Nettoyage
         for col in ['Salaire (€)', 'Primes (€)']:
             if col in df_global.columns: df_global[col] = df_global[col].apply(clean_currency)
         
@@ -181,89 +165,70 @@ def load_data():
 
 rh, rec, form_detail, raw_data = load_data()
 
-# --- INTERFACE ---
 if rh is not None:
     
-    # NAVIGATION PRO
     with st.sidebar:
-        st.image("https://cdn-icons-png.flaticon.com/512/3135/3135715.png", width=50)
-        
+        st.image("https://cdn-icons-png.flaticon.com/512/847/847969.png", width=60)
         selected = option_menu(
             menu_title="RH COCKPIT",
             options=["Dashboard", "Salariés", "Formation", "Recrutement", "Simulation", "Gestion BDD"],
             icons=["speedometer2", "people", "mortarboard", "bullseye", "calculator", "database"],
-            menu_icon="cast",
-            default_index=0,
+            menu_icon="cast", default_index=0,
             styles={
-                "container": {"padding": "0!important", "background-color": "#161b22"},
+                "container": {"padding": "0!important", "background-color": "transparent"},
                 "icon": {"color": "#38bdf8", "font-size": "16px"}, 
-                "nav-link": {"font-size": "14px", "text-align": "left", "margin":"0px", "--hover-color": "#2d3e55"},
-                "nav-link-selected": {"background-color": "#3b82f6"},
+                "nav-link": {"font-size": "14px", "text-align": "left", "margin":"5px", "--hover-color": "#1f2937", "color": "#e5e7eb"},
+                "nav-link-selected": {"background-color": "#3b82f6", "color": "white"},
             }
         )
-        
         st.markdown("---")
         services = ['Tous'] + sorted(rh['Service'].unique().tolist()) if 'Service' in rh.columns else ['Tous']
         selected_service = st.selectbox("Filtrer par Service", services)
         rh_f = rh[rh['Service'] == selected_service] if selected_service != 'Tous' else rh
         form_f = form_detail[form_detail['Service'] == selected_service] if selected_service != 'Tous' else form_detail
 
-    # --- 1. DASHBOARD ---
+    # 1. DASHBOARD
     if selected == "Dashboard":
         st.title(f"Vue d'ensemble ({selected_service})")
-        
         ms = rh_f['Salaire (€)'].sum() * 12 * 1.45
         nb = len(rh_f)
         age = rh_f['Âge'].mean() if 'Âge' in rh_f.columns else 0
         cout_form = rh_f['Coût Formation (€)'].sum()
         
-        # 4 Cartes KPIs
         c1, c2, c3, c4 = st.columns(4)
         c1.markdown(f"<div class='card'><div class='kpi-val'>{nb}</div><div class='kpi-lbl'>Collaborateurs</div></div>", unsafe_allow_html=True)
         c2.markdown(f"<div class='card'><div class='kpi-val'>{ms/1000:.0f} k€</div><div class='kpi-lbl'>Masse Salariale</div></div>", unsafe_allow_html=True)
         c3.markdown(f"<div class='card'><div class='kpi-val'>{age:.0f} ans</div><div class='kpi-lbl'>Âge Moyen</div></div>", unsafe_allow_html=True)
         c4.markdown(f"<div class='card'><div class='kpi-val'>{cout_form:,.0f} €</div><div class='kpi-lbl'>Budget Formation</div></div>", unsafe_allow_html=True)
         
-        # Graphiques dans des cartes
         g1, g2 = st.columns(2)
         with g1:
             st.markdown("<div class='card'><h3>Répartition CSP</h3>", unsafe_allow_html=True)
             if 'CSP' in rh_f.columns:
                 st.plotly_chart(clean_chart(px.pie(rh_f, names='CSP', hole=0.6, color_discrete_sequence=px.colors.sequential.Blues)), use_container_width=True)
             st.markdown("</div>", unsafe_allow_html=True)
-            
         with g2:
             st.markdown("<div class='card'><h3>Pyramide des Âges</h3>", unsafe_allow_html=True)
             if 'Âge' in rh_f.columns:
                 st.plotly_chart(clean_chart(px.histogram(rh_f, x='Âge', nbins=10, color_discrete_sequence=['#3b82f6'])), use_container_width=True)
             st.markdown("</div>", unsafe_allow_html=True)
 
-    # --- 2. SALARIÉS (Design Fiche Amélioré) ---
+    # 2. SALARIÉS (MODIFIÉ : SELECTBOX)
     elif selected == "Salariés":
         st.title("🗂️ Gestion des Talents")
-        
         col_list, col_detail = st.columns([1, 3])
+        
         with col_list:
             st.markdown("<div class='card'><h3>Annuaire</h3>", unsafe_allow_html=True)
-            search = st.text_input("Rechercher", placeholder="Nom...")
             liste = sorted(rh_f['Nom'].unique().tolist())
-            if search: liste = [n for n in liste if search.lower() in n.lower()]
-            choix = st.radio("Employés", liste, label_visibility="collapsed")
+            # LE CHANGEMENT EST ICI : SELECTBOX AU LIEU DE RADIO
+            choix = st.selectbox("Rechercher un employé :", liste) 
             st.markdown("</div>", unsafe_allow_html=True)
 
         with col_detail:
             if choix:
                 emp = rh[rh['Nom'] == choix].iloc[0]
-                
-                # En-tête
-                st.markdown(f"""
-                <div class='card' style='border-left: 5px solid #38bdf8;'>
-                    <h2 style='margin:0; color:white !important;'>{emp['Nom']}</h2>
-                    <p style='color:#94a3b8;'>{emp['Poste']} • {emp['Service']} • {emp.get('CSP', '')}</p>
-                </div>
-                """, unsafe_allow_html=True)
-                
-                # Bouton PDF
+                st.markdown(f"""<div class='card' style='border-left: 5px solid #38bdf8;'><h2 style='margin:0; color:#f3f4f6 !important;'>{emp['Nom']}</h2><p style='color:#94a3b8 !important;'>{emp['Poste']} • {emp['Service']} • {emp.get('CSP', '')}</p></div>""", unsafe_allow_html=True)
                 hist = form_detail[form_detail['Nom'] == choix] if not form_detail.empty else pd.DataFrame()
                 try: st.download_button("📄 Télécharger le Dossier PDF", data=create_pdf(emp, hist), file_name=f"{emp['Nom']}.pdf", mime="application/pdf")
                 except: pass
@@ -274,84 +239,68 @@ if rh is not None:
                     st.metric("Salaire Fixe", f"{emp.get('Salaire (€)', 0):,.0f} €")
                     st.metric("Primes", f"{emp.get('Primes (€)', 0):,.0f} €")
                     st.metric("Total Brut", f"{(emp.get('Salaire (€)', 0)+emp.get('Primes (€)', 0)):,.0f} €")
+                    if str(emp.get('Au SMIC', 'No')).lower() == 'oui': st.markdown('<div class="alert-box">⚠️ Attention : Salaire au niveau du SMIC</div>', unsafe_allow_html=True)
                     st.markdown("</div>", unsafe_allow_html=True)
-                
                 with c2:
                     st.markdown("<div class='card'><h3>🎓 Parcours Formation</h3>", unsafe_allow_html=True)
-                    if not hist.empty:
-                        st.dataframe(hist[['Type Formation', 'Coût Formation (€)']], hide_index=True, use_container_width=True)
-                    else:
-                        st.info("Aucune formation.")
+                    if not hist.empty: st.dataframe(hist[['Type Formation', 'Coût Formation (€)']], hide_index=True, use_container_width=True)
+                    else: st.info("Aucune formation.")
                     st.markdown("</div>", unsafe_allow_html=True)
 
-    # --- 3. FORMATION ---
+    # 3. FORMATION
     elif selected == "Formation":
         st.title("🎓 Pilotage de la Formation")
-        
-        # KPIs
         budget_total = form_f['Coût Formation (€)'].sum()
         nb_actions = len(form_f)
-        
         c1, c2 = st.columns(2)
         c1.markdown(f"<div class='card'><div class='kpi-val'>{budget_total:,.0f} €</div><div class='kpi-lbl'>Budget Consommé</div></div>", unsafe_allow_html=True)
         c2.markdown(f"<div class='card'><div class='kpi-val'>{nb_actions}</div><div class='kpi-lbl'>Actions réalisées</div></div>", unsafe_allow_html=True)
-        
         st.markdown("<div class='card'><h3>Détail des actions</h3>", unsafe_allow_html=True)
         st.dataframe(form_f, use_container_width=True)
         st.markdown("</div>", unsafe_allow_html=True)
 
-    # --- 4. RECRUTEMENT ---
+    # 4. RECRUTEMENT
     elif selected == "Recrutement":
         st.title("🎯 Talent Acquisition")
-        
         total_rec = rec['Coût Recrutement (€)'].sum()
-        
         c1, c2 = st.columns(2)
         c1.markdown(f"<div class='card'><div class='kpi-val'>{total_rec:,.0f} €</div><div class='kpi-lbl'>Investissement</div></div>", unsafe_allow_html=True)
         c2.markdown(f"<div class='card'><div class='kpi-val'>{len(rec)}</div><div class='kpi-lbl'>Postes Ouverts</div></div>", unsafe_allow_html=True)
-        
         st.markdown("<div class='card'><h3>Pipeline de Recrutement</h3>", unsafe_allow_html=True)
         st.dataframe(rec, use_container_width=True)
         st.markdown("</div>", unsafe_allow_html=True)
 
-    # --- 5. SIMULATION ---
+    # 5. SIMULATION
     elif selected == "Simulation":
         st.title("🔮 Prospective Salariale")
         st.markdown("<div class='card'><h3>Paramètres</h3>", unsafe_allow_html=True)
         augm = st.slider("Hypothèse d'augmentation (%)", 0.0, 10.0, 2.0, 0.1)
         st.markdown("</div>", unsafe_allow_html=True)
-        
         ms_actuelle = rh_f['Salaire (€)'].sum() * 12 * 1.45
         impact = ms_actuelle * (augm/100)
-        
         st.metric("Impact Financier", f"+ {impact:,.0f} €", delta="Coût Annuel", delta_color="inverse")
         st.plotly_chart(clean_chart(go.Figure(go.Waterfall(measure=["relative", "relative", "total"], x=["Actuel", "Impact", "Futur"], y=[ms_actuelle, impact, ms_actuelle+impact]))), use_container_width=True)
 
-    # --- 6. ADMINISTRATION (LE COCKPIT D'ÉDITION) ---
+    # 6. GESTION BDD
     elif selected == "Gestion BDD":
         st.title("🛠️ Centre de Gestion des Données")
         st.info("Ici, vous pouvez modifier directement toutes les données. Les changements sont sauvegardés dans Google Sheets.")
-        
         tab_rh, tab_sal, tab_form, tab_rec = st.tabs(["👥 Employés", "💰 Salaires", "🎓 Formation", "🎯 Recrutement"])
-        
         with tab_rh:
             st.markdown("<div class='card'>", unsafe_allow_html=True)
             edited_rh = st.data_editor(raw_data['Données Sociales'], num_rows="dynamic", use_container_width=True)
             if st.button("💾 Sauvegarder Employés"): save_data_to_google(edited_rh, 'Données Sociales')
             st.markdown("</div>", unsafe_allow_html=True)
-            
         with tab_sal:
             st.markdown("<div class='card'>", unsafe_allow_html=True)
             edited_sal = st.data_editor(raw_data['Salaires'], num_rows="dynamic", use_container_width=True)
             if st.button("💾 Sauvegarder Salaires"): save_data_to_google(edited_sal, 'Salaires')
             st.markdown("</div>", unsafe_allow_html=True)
-            
         with tab_form:
             st.markdown("<div class='card'>", unsafe_allow_html=True)
             edited_form = st.data_editor(raw_data['Formation'], num_rows="dynamic", use_container_width=True)
             if st.button("💾 Sauvegarder Formations"): save_data_to_google(edited_form, 'Formation')
             st.markdown("</div>", unsafe_allow_html=True)
-            
         with tab_rec:
             st.markdown("<div class='card'>", unsafe_allow_html=True)
             edited_rec = st.data_editor(raw_data['Recrutement'], num_rows="dynamic", use_container_width=True)
