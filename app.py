@@ -10,36 +10,36 @@ import time
 from streamlit_option_menu import option_menu
 
 # Configuration
-st.set_page_config(page_title="RH Cockpit Pro V66", layout="wide", initial_sidebar_state="expanded")
+st.set_page_config(page_title="RH Cockpit V65", layout="wide", initial_sidebar_state="expanded")
 
-# --- DESIGN "DEEP LAYERS" ---
+# --- DESIGN ---
 st.markdown("""
     <style>
-    .stApp { background-color: #0b0f19; }
-    [data-testid="stSidebar"] { background-color: #111827; border-right: 1px solid #1f2937; }
-    h1, h2, h3 { color: #f3f4f6 !important; font-family: 'Segoe UI', sans-serif; }
-    p, div, label, span, li, .stMarkdown { color: #e5e7eb !important; }
+    .stApp { background-color: #0e1117; }
+    [data-testid="stSidebar"] { background-color: #161b22; border-right: 1px solid #30363d; }
+    h1, h2, h3, p, div, label, span, li { color: #FFFFFF !important; }
     
     .card {
         background-color: #1f2937;
-        padding: 25px;
+        padding: 20px;
         border-radius: 12px;
         border: 1px solid #374151;
-        box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.3);
-        margin-bottom: 25px;
+        box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.2);
+        margin-bottom: 20px;
     }
     .card h3 {
         color: #38bdf8 !important;
-        font-size: 20px;
-        font-weight: 600;
-        margin-bottom: 20px;
-        border-bottom: 2px solid #374151;
-        padding-bottom: 12px;
+        font-size: 18px;
+        margin-bottom: 15px;
+        border-bottom: 1px solid #374151;
+        padding-bottom: 10px;
     }
-    .kpi-val { font-size: 32px; font-weight: 800; color: #f9fafb; }
-    .kpi-lbl { font-size: 14px; color: #9ca3af; text-transform: uppercase; letter-spacing: 1px; font-weight: 600;}
-    .alert-box { background-color: rgba(127, 29, 29, 0.5); color: #fca5a5 !important; padding: 15px; border-radius: 8px; border: 1px solid #ef4444; }
-    [data-testid="stDataFrame"] { background-color: transparent !important; }
+    .kpi-val { font-size: 28px; font-weight: bold; color: white; }
+    .kpi-lbl { font-size: 13px; color: #9ca3af; text-transform: uppercase; }
+    .alert-box { background-color: #450a0a; color: #fca5a5; padding: 10px; border-radius: 5px; border: 1px solid #ef4444; }
+    
+    /* Fond transparent pour les graphiques */
+    [data-testid="stPlotlyChart"] { background-color: transparent; }
     </style>
 """, unsafe_allow_html=True)
 
@@ -69,7 +69,7 @@ def save_data_to_google(df, worksheet_name):
         time.sleep(1)
         st.cache_data.clear()
         st.rerun()
-    except Exception as e: st.error(f"Erreur : {e}")
+    except Exception as e: st.error(f"Erreur sauvegarde : {e}")
 
 if 'logged_in' not in st.session_state: st.session_state['logged_in'] = False
 def check_login():
@@ -122,14 +122,17 @@ def calculer_donnees(df):
 
 def clean_chart(fig):
     fig.update_layout(
-        paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)", font=dict(color="#e5e7eb"),
+        paper_bgcolor="rgba(0,0,0,0)", 
+        plot_bgcolor="rgba(0,0,0,0)", 
+        font=dict(color="white"),
         margin=dict(l=10, r=10, t=40, b=10),
-        xaxis=dict(showgrid=False, color="#e5e7eb"),
-        yaxis=dict(showgrid=True, gridcolor="#374151", color="#e5e7eb"),
-        legend=dict(font=dict(color="#e5e7eb"))
+        xaxis=dict(showgrid=False, color="white"),
+        yaxis=dict(showgrid=True, gridcolor="#334155", color="white"),
+        legend=dict(font=dict(color="white"), orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
     )
     return fig
 
+# --- CHARGEMENT ---
 @st.cache_data(ttl=60)
 def load_data():
     try:
@@ -165,31 +168,37 @@ def load_data():
 
 rh, rec, form_detail, raw_data = load_data()
 
+# --- INTERFACE ---
 if rh is not None:
     
     with st.sidebar:
-        st.image("https://cdn-icons-png.flaticon.com/512/847/847969.png", width=60)
+        # AVATAR NEUTRE (Gris/Blanc)
+        st.image("https://cdn-icons-png.flaticon.com/512/1077/1077114.png", width=60)
+        
         selected = option_menu(
             menu_title="RH COCKPIT",
             options=["Dashboard", "Salariés", "Formation", "Recrutement", "Simulation", "Gestion BDD"],
             icons=["speedometer2", "people", "mortarboard", "bullseye", "calculator", "database"],
-            menu_icon="cast", default_index=0,
+            menu_icon="cast",
+            default_index=0,
             styles={
-                "container": {"padding": "0!important", "background-color": "transparent"},
+                "container": {"padding": "0!important", "background-color": "#161b22"},
                 "icon": {"color": "#38bdf8", "font-size": "16px"}, 
-                "nav-link": {"font-size": "14px", "text-align": "left", "margin":"5px", "--hover-color": "#1f2937", "color": "#e5e7eb"},
+                "nav-link": {"font-size": "14px", "text-align": "left", "margin":"5px", "--hover-color": "#2d3e55"},
                 "nav-link-selected": {"background-color": "#3b82f6", "color": "white"},
             }
         )
+        
         st.markdown("---")
         services = ['Tous'] + sorted(rh['Service'].unique().tolist()) if 'Service' in rh.columns else ['Tous']
         selected_service = st.selectbox("Filtrer par Service", services)
         rh_f = rh[rh['Service'] == selected_service] if selected_service != 'Tous' else rh
         form_f = form_detail[form_detail['Service'] == selected_service] if selected_service != 'Tous' else form_detail
 
-    # 1. DASHBOARD
+    # --- 1. DASHBOARD ---
     if selected == "Dashboard":
         st.title(f"Vue d'ensemble ({selected_service})")
+        
         ms = rh_f['Salaire (€)'].sum() * 12 * 1.45
         nb = len(rh_f)
         age = rh_f['Âge'].mean() if 'Âge' in rh_f.columns else 0
@@ -205,34 +214,54 @@ if rh is not None:
         with g1:
             st.markdown("<div class='card'><h3>Répartition CSP</h3>", unsafe_allow_html=True)
             if 'CSP' in rh_f.columns:
-                st.plotly_chart(clean_chart(px.pie(rh_f, names='CSP', hole=0.6, color_discrete_sequence=px.colors.sequential.Blues)), use_container_width=True)
+                # COULEURS DISTINCTES : Bleu, Orange, Vert, Violet
+                fig = px.pie(rh_f, names='CSP', hole=0.6, 
+                             color_discrete_sequence=['#3b82f6', '#f97316', '#22c55e', '#a855f7'])
+                st.plotly_chart(clean_chart(fig), use_container_width=True)
             st.markdown("</div>", unsafe_allow_html=True)
+            
         with g2:
             st.markdown("<div class='card'><h3>Pyramide des Âges</h3>", unsafe_allow_html=True)
-            if 'Âge' in rh_f.columns:
-                st.plotly_chart(clean_chart(px.histogram(rh_f, x='Âge', nbins=10, color_discrete_sequence=['#3b82f6'])), use_container_width=True)
+            if 'Âge' in rh_f.columns and 'Sexe' in rh_f.columns:
+                # Création des tranches
+                rh_f['Tranche'] = pd.cut(rh_f['Âge'], bins=[20,30,40,50,60,70], labels=["20-30","30-40","40-50","50-60","60+"]).astype(str)
+                
+                # Calcul pour la pyramide (Hommes en négatif)
+                pyr = rh_f.groupby(['Tranche', 'Sexe']).size().reset_index(name='Nb')
+                pyr['Nb_Plot'] = pyr.apply(lambda x: -x['Nb'] if x['Sexe']=='Homme' else x['Nb'], axis=1)
+                
+                # Graphique en Barres Horizontales
+                fig = px.bar(pyr, x='Nb_Plot', y='Tranche', color='Sexe', orientation='h',
+                             color_discrete_map={'Homme': '#3b82f6', 'Femme': '#ec4899'}, # Bleu vs Rose
+                             labels={'Nb_Plot': 'Effectif'})
+                
+                # Astuce pour rendre les chiffres de l'axe X positifs visuellement
+                fig.update_layout(xaxis=dict(tickmode='array', tickvals=[-5, -2, 0, 2, 5], ticktext=['5', '2', '0', '2', '5']))
+                
+                st.plotly_chart(clean_chart(fig), use_container_width=True)
             st.markdown("</div>", unsafe_allow_html=True)
 
-    # 2. SALARIÉS (MODIFIÉ : SELECTBOX)
+    # [LES AUTRES PAGES RESTENT IDENTIQUES À LA V64]
+    # Je les remets pour que tu aies un fichier complet sans trous
+    
     elif selected == "Salariés":
         st.title("🗂️ Gestion des Talents")
         col_list, col_detail = st.columns([1, 3])
-        
         with col_list:
             st.markdown("<div class='card'><h3>Annuaire</h3>", unsafe_allow_html=True)
+            search = st.text_input("Rechercher", placeholder="Nom...")
             liste = sorted(rh_f['Nom'].unique().tolist())
-            # LE CHANGEMENT EST ICI : SELECTBOX AU LIEU DE RADIO
-            choix = st.selectbox("Rechercher un employé :", liste) 
+            if search: liste = [n for n in liste if search.lower() in n.lower()]
+            choix = st.radio("Employés", liste, label_visibility="collapsed")
             st.markdown("</div>", unsafe_allow_html=True)
 
         with col_detail:
             if choix:
                 emp = rh[rh['Nom'] == choix].iloc[0]
-                st.markdown(f"""<div class='card' style='border-left: 5px solid #38bdf8;'><h2 style='margin:0; color:#f3f4f6 !important;'>{emp['Nom']}</h2><p style='color:#94a3b8 !important;'>{emp['Poste']} • {emp['Service']} • {emp.get('CSP', '')}</p></div>""", unsafe_allow_html=True)
+                st.markdown(f"""<div class='card' style='border-left: 5px solid #38bdf8;'><h2 style='margin:0; color:white!important;'>{emp['Nom']}</h2><p style='color:#94a3b8;'>{emp['Poste']} • {emp['Service']} • {emp.get('CSP', '')}</p></div>""", unsafe_allow_html=True)
                 hist = form_detail[form_detail['Nom'] == choix] if not form_detail.empty else pd.DataFrame()
-                try: st.download_button("📄 Télécharger le Dossier PDF", data=create_pdf(emp, hist), file_name=f"{emp['Nom']}.pdf", mime="application/pdf")
+                try: st.download_button("📄 Télécharger PDF", data=create_pdf(emp, hist), file_name=f"{emp['Nom']}.pdf", mime="application/pdf")
                 except: pass
-                
                 c1, c2 = st.columns(2)
                 with c1:
                     st.markdown("<div class='card'><h3>💰 Rémunération</h3>", unsafe_allow_html=True)
@@ -247,7 +276,6 @@ if rh is not None:
                     else: st.info("Aucune formation.")
                     st.markdown("</div>", unsafe_allow_html=True)
 
-    # 3. FORMATION
     elif selected == "Formation":
         st.title("🎓 Pilotage de la Formation")
         budget_total = form_f['Coût Formation (€)'].sum()
@@ -259,7 +287,6 @@ if rh is not None:
         st.dataframe(form_f, use_container_width=True)
         st.markdown("</div>", unsafe_allow_html=True)
 
-    # 4. RECRUTEMENT
     elif selected == "Recrutement":
         st.title("🎯 Talent Acquisition")
         total_rec = rec['Coût Recrutement (€)'].sum()
@@ -270,7 +297,6 @@ if rh is not None:
         st.dataframe(rec, use_container_width=True)
         st.markdown("</div>", unsafe_allow_html=True)
 
-    # 5. SIMULATION
     elif selected == "Simulation":
         st.title("🔮 Prospective Salariale")
         st.markdown("<div class='card'><h3>Paramètres</h3>", unsafe_allow_html=True)
@@ -281,7 +307,6 @@ if rh is not None:
         st.metric("Impact Financier", f"+ {impact:,.0f} €", delta="Coût Annuel", delta_color="inverse")
         st.plotly_chart(clean_chart(go.Figure(go.Waterfall(measure=["relative", "relative", "total"], x=["Actuel", "Impact", "Futur"], y=[ms_actuelle, impact, ms_actuelle+impact]))), use_container_width=True)
 
-    # 6. GESTION BDD
     elif selected == "Gestion BDD":
         st.title("🛠️ Centre de Gestion des Données")
         st.info("Ici, vous pouvez modifier directement toutes les données. Les changements sont sauvegardés dans Google Sheets.")
@@ -305,4 +330,4 @@ if rh is not None:
             st.markdown("<div class='card'>", unsafe_allow_html=True)
             edited_rec = st.data_editor(raw_data['Recrutement'], num_rows="dynamic", use_container_width=True)
             if st.button("💾 Sauvegarder Recrutements"): save_data_to_google(edited_rec, 'Recrutement')
-            st.markdown("</div>", unsafe_allow_html=True)
+            st.markdown("</div>", unsafe_allow_
