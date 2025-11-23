@@ -6,33 +6,12 @@ from datetime import datetime
 from fpdf import FPDF
 import gspread
 from google.oauth2.service_account import Credentials
-import google.generativeai as genai # L'IA de Google
+import google.generativeai as genai
 
-# --- CONFIGURATION ---
-st.set_page_config(page_title="Dashboard RH + IA", layout="wide")
+# Configuration
+st.set_page_config(page_title="Dashboard RH", layout="wide")
 
-# --- FONCTIONS IA (SÉCURISÉES) ---
-def configure_gemini():
-    try:
-        # On vérifie si la clé existe dans les secrets
-        if "gemini" in st.secrets and "api_key" in st.secrets["gemini"]:
-            api_key = st.secrets["gemini"]["api_key"]
-            genai.configure(api_key=api_key)
-            return True
-        else:
-            return False
-    except Exception:
-        return False
-
-def ask_gemini(prompt):
-    try:
-        model = genai.GenerativeModel('gemini-pro')
-        response = model.generate_content(prompt)
-        return response.text
-    except Exception as e:
-        return f"Erreur IA : {e}"
-
-# --- AUTHENTIFICATION GOOGLE SHEETS ---
+# --- 1. AUTHENTIFICATION GOOGLE SHEETS ---
 def connect_google_sheet():
     try:
         secrets = st.secrets["gcp_service_account"]
@@ -42,10 +21,29 @@ def connect_google_sheet():
         sheet = client.open("Dashboard_Data") 
         return sheet
     except Exception as e:
-        st.error(f"⚠️ Erreur connexion Google Sheets : {e}")
+        st.error(f"⚠️ Erreur connexion Google : {e}")
         st.stop()
 
-# --- LOGIN ---
+# --- 2. CONFIGURATION IA (GEMINI) ---
+def configure_gemini():
+    try:
+        if "gemini" in st.secrets and "api_key" in st.secrets["gemini"]:
+            api_key = st.secrets["gemini"]["api_key"]
+            genai.configure(api_key=api_key)
+            return True
+        return False
+    except: return False
+
+def ask_gemini(prompt):
+    try:
+        # On utilise le modèle 1.5 Flash (Plus rapide et stable)
+        model = genai.GenerativeModel('gemini-1.5-flash')
+        response = model.generate_content(prompt)
+        return response.text
+    except Exception as e:
+        return f"L'assistant est indisponible pour le moment ({e})."
+
+# --- 3. LOGIN ---
 if 'logged_in' not in st.session_state: st.session_state['logged_in'] = False
 if 'username' not in st.session_state: st.session_state['username'] = ""
 
@@ -55,7 +53,7 @@ def check_login():
     if user == "admin" and pwd == "rh123":
         st.session_state['logged_in'] = True
         st.session_state['username'] = user
-    else: st.error("Erreur login")
+    else: st.error("Identifiant incorrect")
 
 def logout():
     st.session_state['logged_in'] = False
@@ -63,15 +61,15 @@ def logout():
 
 if not st.session_state['logged_in']:
     st.markdown("""<style>.stApp {background-color: #1a2639;} h1 {color: white; text-align: center;}</style>""", unsafe_allow_html=True)
-    st.title("🔒 Espace RH")
+    st.title("🔒 Portail RH")
     c1,c2,c3 = st.columns([1,1,1])
     with c2:
-        st.text_input("ID", key="input_user")
-        st.text_input("MDP", type="password", key="input_password")
+        st.text_input("Identifiant", key="input_user")
+        st.text_input("Mot de passe", type="password", key="input_password")
         st.button("Connexion", on_click=check_login)
     st.stop()
 
-# --- DESIGN ---
+# --- 4. DESIGN ---
 st.markdown("""
     <style>
     .stApp { background-color: #1a2639; }
@@ -80,8 +78,7 @@ st.markdown("""
     [data-testid="stMetric"] { background-color: #2d3e55; border-radius: 8px; border-left: 5px solid #4ade80; }
     [data-testid="stMetricValue"] { color: #FFFFFF !important; }
     .smic-alert { background-color: #7f1d1d; color: white; padding: 10px; border-radius: 5px; border: 1px solid #ef4444; }
-    /* Chatbot style */
-    .stChatMessage { background-color: #2d3e55; border-radius: 10px; margin-bottom: 10px; }
+    .stChatMessage { background-color: #2d3e55; border-radius: 10px; }
     </style>
 """, unsafe_allow_html=True)
 
@@ -92,7 +89,7 @@ with st.sidebar:
 
 st.title("🚀 Pilotage Stratégique : RH & Finances")
 
-# --- FONCTIONS UTILITAIRES ---
+# --- 5. FONCTIONS UTILES ---
 def create_pdf(emp, form_hist):
     pdf = FPDF()
     pdf.add_page()
@@ -147,6 +144,7 @@ def calculer_donnees_rh(df):
         df['Écart Svc'] = df['Salaire (€)'] - df['Moyenne Svc']
     return df
 
+# --- 6. CHARGEMENT ---
 @st.cache_data(ttl=60)
 def charger_donnees():
     try:
@@ -184,15 +182,14 @@ def charger_donnees():
         for col in ['Date Ouverture Poste', 'Date Clôture Poste']:
             if col in df_rec.columns: df_rec[col] = pd.to_datetime(df_rec[col], dayfirst=True, errors='coerce')
         
-        if 'Coût Recrutement (€)' in df_rec.columns:
-            df_rec['Coût Recrutement (€)'] = df_rec['Coût Recrutement (€)'].apply(clean_currency)
-            df_rec['Coût Recrutement (€)'] = pd.to_numeric(df_rec['Coût Recrutement (€)'], errors='coerce').fillna(0)
-
-        cols_num = ['Primes (€)', 'Salaire (€)', 'Primes Futures (€)', 'Évaluation (1-5)']
+        cols_num = ['Primes (€)', 'Salaire (€)', 'Primes Futures (€)', 'Évaluation (1-5)', 'Coût Recrutement (€)']
         for c in cols_num:
             if c in df_global.columns: 
                 df_global[c] = df_global[c].apply(clean_currency)
                 df_global[c] = pd.to_numeric(df_global[c], errors='coerce').fillna(0)
+            if c in df_rec.columns:
+                df_rec[c] = df_rec[c].apply(clean_currency)
+                df_rec[c] = pd.to_numeric(df_rec[c], errors='coerce').fillna(0)
 
         if 'Au SMIC' not in df_global.columns: df_global['Au SMIC'] = 'Non'
         if 'Catégorie Métier' not in df_global.columns: df_global['Catégorie Métier'] = 'Non défini'
@@ -216,40 +213,45 @@ if rh is not None:
         form_f = form_detail[form_detail['Service'] == filtre_service]
     else: form_f = form_detail
 
+    # TABS (L'Assistant IA est en premier)
     tab_ia, tab_metier, tab_fiche, tab_rem, tab_form, tab_rec, tab_budget, tab_simul = st.tabs([
-        "🤖 Assistant IA", "📂 Métiers", "🔍 Fiche", "📈 Rémunération", "🎓 Formation", "🎯 Recrutement", "💰 Budget", "🔮 Simulation"
+        "🤖 Assistant", "📂 Métiers", "🔍 Fiche", "📈 Rémunération", "🎓 Formation", "🎯 Recrutement", "💰 Budget", "🔮 Simulation"
     ])
 
-    # --- 0. ASSISTANT IA ---
+    # --- 0. ASSISTANT IA (CORRIGÉ & PROPRE) ---
     with tab_ia:
-        st.header("🤖 Assistant RH (Propulsé par Gemini)")
+        st.header("🤖 Assistant Virtuel RH")
         if configure_gemini():
-            st.info("Posez une question sur vos données.")
             if "messages" not in st.session_state: st.session_state.messages = []
+            
+            # Affichage historique
             for msg in st.session_state.messages:
                 with st.chat_message(msg["role"]): st.markdown(msg["content"])
 
-            if prompt := st.chat_input("Votre question..."):
+            # Input
+            if prompt := st.chat_input("Posez votre question sur les données..."):
                 st.session_state.messages.append({"role": "user", "content": prompt})
                 with st.chat_message("user"): st.markdown(prompt)
                 
-                # Contexte simplifié pour l'IA
+                # Contexte Data
                 contexte = f"""
-                Données RH :
-                - Effectif : {len(rh)}
-                - Masse salariale mensuelle : {rh['Salaire (€)'].sum()} €
-                - Salariés : {rh[['Nom', 'Poste', 'Service', 'Salaire (€)', 'CSP']].to_string()}
-                - Recrutements : {rec[['Poste', 'Coût Recrutement (€)']].to_string() if not rec.empty else 'Aucun'}
-                Réponds à la question : {prompt}
+                Agis comme un DRH expert. Analyse ces données :
+                - Effectif total : {len(rh)} employés.
+                - Masse salariale mensuelle : {rh['Salaire (€)'].sum():,.0f} €.
+                - Liste employés et salaires : {rh[['Nom', 'Poste', 'Service', 'Salaire (€)', 'CSP']].to_string()}
+                - Recrutements en cours : {rec[['Poste', 'Coût Recrutement (€)']].to_string() if not rec.empty else 'Aucun'}
+                
+                Question de l'utilisateur : {prompt}
+                Réponds de manière courte et professionnelle.
                 """
                 
                 reply = ask_gemini(contexte)
                 with st.chat_message("assistant"): st.markdown(reply)
                 st.session_state.messages.append({"role": "assistant", "content": reply})
         else:
-            st.warning("⚠️ Clé Gemini non configurée dans secrets.toml")
+            st.info("💡 Pour activer l'IA, ajoutez votre clé Gemini dans les secrets.")
 
-    # [LE RESTE DES ONGLETS EST IDENTIQUE V45]
+    # [LES AUTRES ONGLETS RESTENT PARFAITS]
     
     with tab_metier:
         st.header("Cartographie Métiers")
