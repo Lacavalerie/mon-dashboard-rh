@@ -9,19 +9,80 @@ from google.oauth2.service_account import Credentials
 import time
 from streamlit_option_menu import option_menu
 
-# Configuration
-st.set_page_config(page_title="RH Cockpit V67", layout="wide", initial_sidebar_state="expanded")
+# Configuration de la page
+st.set_page_config(page_title="H&C Pilotage RH", layout="wide", initial_sidebar_state="expanded")
 
-# --- PALETTE DE COULEURS CONTRASTÉES (ACCESSIBILITÉ) ---
-COLORS = ['#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899', '#06b6d4']
-
-# --- DESIGN ---
+# --- CSS PERSONNALISÉ (DESIGN LOGIN PREMIUM & DASHBOARD) ---
 st.markdown("""
     <style>
+    /* Fond général de l'application une fois connecté */
     .stApp { background-color: #0e1117; }
+    
+    /* Sidebar */
     [data-testid="stSidebar"] { background-color: #161b22; border-right: 1px solid #30363d; }
+    
+    /* Textes généraux en blanc */
     h1, h2, h3, p, div, label, span, li { color: #FFFFFF !important; }
     
+    /* --- STYLE SPÉCIFIQUE POUR LA PAGE DE CONNEXION --- */
+    
+    /* Conteneur du formulaire de login à droite */
+    .login-form-container {
+        background-color: #161b22; /* Fond sombre légèrement différent du main */
+        padding: 40px;
+        border-radius: 15px;
+        box-shadow: 0 10px 25px rgba(0,0,0,0.3);
+        border: 1px solid #30363d;
+    }
+    
+    /* Titres du login */
+    .login-title { font-size: 32px; font-weight: bold; margin-bottom: 10px; color: white; }
+    .login-subtitle { font-size: 16px; color: #9ca3af !important; margin-bottom: 30px; }
+    
+    /* Labels des inputs */
+    .login-label { font-size: 14px; font-weight: 600; margin-bottom: 5px; color: #e5e7eb !important; }
+    
+    /* Customisation des champs de saisie Streamlit (Input boxes) */
+    /* C'est un peu technique, on cible les éléments internes de Streamlit */
+    div[data-testid="stTextInput"] input {
+        background-color: #1f2937 !important; /* Fond très sombre */
+        border: 1px solid #374151 !important; /* Bordure grise subtile */
+        color: white !important;
+        border-radius: 8px !important;
+        padding: 10px !important;
+    }
+    div[data-testid="stTextInput"] input:focus {
+        border-color: #3b82f6 !important; /* Bordure bleue au focus */
+        box-shadow: 0 0 0 1px #3b82f6 !important;
+    }
+
+    /* Customisation du Gros Bouton Login Bleu */
+    .stButton .login-btn {
+        width: 100%;
+        background-color: #3b82f6 !important; /* Bleu vif */
+        color: white !important;
+        border: none;
+        padding: 12px 24px;
+        text-align: center;
+        text-decoration: none;
+        display: inline-block;
+        font-size: 16px;
+        font-weight: bold;
+        border-radius: 8px;
+        cursor: pointer;
+        transition: background-color 0.3s;
+    }
+    .stButton .login-btn:hover {
+        background-color: #2563eb !important; /* Bleu plus foncé au survol */
+    }
+    
+    /* Liens annexes (Forgot password...) */
+    .login-links { font-size: 14px; color: #3b82f6 !important; text-decoration: none; }
+    .login-footer { font-size: 14px; color: #9ca3af !important; text-align: center; margin-top: 20px; }
+    
+    /* --- FIN STYLE LOGIN --- */
+
+    /* STYLE DES CARTES DU DASHBOARD (V68) */
     .card {
         background-color: #1f2937;
         padding: 25px;
@@ -42,10 +103,18 @@ st.markdown("""
     .kpi-lbl { font-size: 14px; color: #9ca3af; text-transform: uppercase; letter-spacing: 1px; font-weight: 600;}
     .alert-box { background-color: rgba(127, 29, 29, 0.5); color: #fca5a5 !important; padding: 15px; border-radius: 8px; border: 1px solid #ef4444; }
     [data-testid="stDataFrame"] { background-color: transparent !important; }
+    
+    /* Bouton Déconnexion Rouge dans la sidebar */
+    [data-testid="stSidebar"] div.stButton > button {
+        background-color: #ef4444 !important;
+        color: white !important;
+        border: none;
+        font-weight: bold;
+    }
     </style>
 """, unsafe_allow_html=True)
 
-# --- FONCTIONS ---
+# --- FONCTIONS TECHNIQUES ---
 def connect_google_sheet():
     try:
         secrets = st.secrets["gcp_service_account"]
@@ -71,34 +140,87 @@ def save_data_to_google(df, worksheet_name):
         time.sleep(1)
         st.cache_data.clear()
         st.rerun()
-    except Exception as e: st.error(f"Erreur : {e}")
+    except Exception as e: st.error(f"Erreur sauvegarde : {e}")
 
+# --- GESTION LOGIN / LOGOUT ---
 if 'logged_in' not in st.session_state: st.session_state['logged_in'] = False
-def check_login():
-    if st.session_state['u'] == "admin" and st.session_state['p'] == "rh123": st.session_state['logged_in'] = True
-    else: st.error("Erreur")
-def logout(): st.session_state['logged_in'] = False; st.rerun()
 
+def check_login():
+    # On vérifie les clés 'login_u' et 'login_p' utilisées dans le nouveau formulaire
+    if st.session_state.get('login_u') == "admin" and st.session_state.get('login_p') == "rh123": 
+        st.session_state['logged_in'] = True
+    else: 
+        # On utilise un toast pour l'erreur sur la nouvelle page de login, c'est plus propre
+        st.toast("❌ Identifiant ou mot de passe incorrect", icon="⚠️")
+
+def logout():
+    st.session_state['logged_in'] = False
+    st.cache_data.clear()
+    st.rerun()
+
+# =========================================
+# NOUVELLE PAGE DE CONNEXION (SPLIT SCREEN)
+# =========================================
 if not st.session_state['logged_in']:
-    # On ajoute le Titre et le Logo ICI pour qu'ils soient visibles avant la connexion
-    st.markdown("""
-        <div style='text-align: center; margin-bottom: 50px;'>
-            <img src="https://cdn-icons-png.flaticon.com/512/3135/3135715.png" width="100">
-            <h1 style='color: white; margin-top: 20px;'>RH COCKPIT PRO</h1>
-            <p style='color: #94a3b8; font-size: 18px;'>Portail de Gestion Stratégique</p>
-        </div>
-    """, unsafe_allow_html=True)
+    # On enlève le padding standard de Streamlit pour que l'image aille plus près des bords
+    st.markdown("""<style>.block-container {padding-top: 1rem; padding-bottom: 0rem; padding-left: 1rem; padding-right: 1rem;}</style>""", unsafe_allow_html=True)
     
-    c1,c2,c3 = st.columns([1,1,1])
-    with c2:
-        st.markdown("<div class='card'>", unsafe_allow_html=True)
-        st.subheader("🔒 Authentification")
-        st.text_input("Identifiant", key="u")
-        st.text_input("Mot de passe", type="password", key="p")
-        st.button("Se connecter", on_click=check_login, use_container_width=True)
-        st.markdown("</div>", unsafe_allow_html=True)
+    # Création de 2 colonnes : Image à gauche (60%), Formulaire à droite (40%)
+    col_image, col_form_space, col_form = st.columns([1.5, 0.1, 1]) # 1.5 pour l'image, 0.1 espace, 1 pour le form
+
+    with col_image:
+        # Image de buildings bleu nuit style "Corporate"
+        # J'utilise une image libre de droit Unsplash qui ressemble à ton exemple.
+        st.image("https://images.unsplash.com/photo-1486406146926-c627a92ad1ab?q=80&w=1000&auto=format&fit=crop", use_container_width=True)
+
+    with col_form:
+        # Espaceur vertical pour centrer le formulaire
+        st.markdown("<div style='height: 50px;'></div>", unsafe_allow_html=True)
+        
+        # Conteneur du formulaire stylisé
+        st.markdown("<div class='login-form-container'>", unsafe_allow_html=True)
+        st.markdown("<div class='login-title'>Login</div>", unsafe_allow_html=True)
+        st.markdown("<div class='login-subtitle'>Welcome back! Please login to your account.</div>", unsafe_allow_html=True)
+        
+        # Champs de saisie avec labels personnalisés
+        st.markdown("<div class='login-label'>Email Address</div>", unsafe_allow_html=True)
+        # On utilise key='login_u' pour le distinguer
+        username = st.text_input("Label caché", placeholder="admin", key="login_u", label_visibility="collapsed")
+        
+        st.markdown("<div style='height: 15px;'></div>", unsafe_allow_html=True) # Espace
+        
+        st.markdown("<div class='login-label'>Password</div>", unsafe_allow_html=True)
+        # On utilise key='login_p'
+        password = st.text_input("Label caché", type="password", placeholder="••••••", key="login_p", label_visibility="collapsed")
+        
+        st.markdown("<div style='height: 15px;'></div>", unsafe_allow_html=True) # Espace
+
+        # Checkbox et lien "Forgot Password" sur la même ligne
+        c_rem, c_forgot = st.columns([1, 1])
+        with c_rem:
+            st.checkbox("Remember me")
+        with c_forgot:
+            st.markdown("<div style='text-align: right;'><a href='#' class='login-links'>Forgot password?</a></div>", unsafe_allow_html=True)
+
+        st.markdown("<div style='height: 25px;'></div>", unsafe_allow_html=True) # Espace avant bouton
+
+        # Bouton Login Customisé (hack CSS pour appliquer la classe .login-btn)
+        # On utilise un callback pour gérer le clic
+        st.markdown('<style>div.stButton > button:first-child { @extend .login-btn; }</style>', unsafe_allow_html=True)
+        st.button("Login", on_click=check_login, use_container_width=True, type="primary")
+
+        # Pied de formulaire
+        st.markdown("<div class='login-footer'>New User? <a href='#' class='login-links'>Signup</a></div>", unsafe_allow_html=True)
+        st.markdown("</div>", unsafe_allow_html=True) # Fin container
+
+    # On arrête tout ici tant qu'on n'est pas connecté
     st.stop()
 
+# =========================================
+# APPLICATION PRINCIPALE (Une fois connecté)
+# =========================================
+
+# --- PDF & UTILITAIRES ---
 def create_pdf(emp, form_hist):
     pdf = FPDF()
     pdf.add_page()
@@ -141,6 +263,7 @@ def clean_chart(fig):
     )
     return fig
 
+# --- CHARGEMENT ---
 @st.cache_data(ttl=60)
 def load_data():
     try:
@@ -179,11 +302,18 @@ rh, rec, form_detail, raw_data = load_data()
 if rh is not None:
     
     with st.sidebar:
-        # AVATAR NEUTRE UNIVERSEL
-        st.image("https://cdn-icons-png.flaticon.com/512/1077/1077114.png", width=60)
+        # --- MODIFICATION ICI : LOGO H&C ---
+        # Assure-toi que le fichier icon_hc.png est dans le même dossier que app.py
+        try:
+            st.image("icon_hc.png", width=80)
+        except:
+            # Fallback si l'image n'est pas trouvée
+            st.warning("Image 'icon_hc.png' introuvable.")
+            st.image("https://cdn-icons-png.flaticon.com/512/1077/1077114.png", width=60)
+
         
         selected = option_menu(
-            menu_title="RH COCKPIT",
+            menu_title="H&C PILOTAGE", # Changement du titre du menu
             options=["Dashboard", "Salariés", "Formation", "Recrutement", "Simulation", "Gestion BDD"],
             icons=["speedometer2", "people", "mortarboard", "bullseye", "calculator", "database"],
             menu_icon="cast", default_index=0,
@@ -195,11 +325,19 @@ if rh is not None:
             }
         )
         st.markdown("---")
+        
+        # FILTRE SERVICE
         services = ['Tous'] + sorted(rh['Service'].unique().tolist()) if 'Service' in rh.columns else ['Tous']
         selected_service = st.selectbox("Filtrer par Service", services)
         rh_f = rh[rh['Service'] == selected_service] if selected_service != 'Tous' else rh
         form_f = form_detail[form_detail['Service'] == selected_service] if selected_service != 'Tous' else form_detail
+        
+        # BOUTON DÉCONNEXION
+        st.markdown("---")
+        if st.button("🚪 Déconnexion", use_container_width=True):
+            logout()
 
+    # 1. DASHBOARD
     if selected == "Dashboard":
         st.title(f"Vue d'ensemble ({selected_service})")
         ms = rh_f['Salaire (€)'].sum() * 12 * 1.45
@@ -217,8 +355,7 @@ if rh is not None:
         with g1:
             st.markdown("<div class='card'><h3>Répartition CSP</h3>", unsafe_allow_html=True)
             if 'CSP' in rh_f.columns:
-                # COULEURS CONTRASTÉES ICI (Bleu, Vert, Orange, Violet)
-                st.plotly_chart(clean_chart(px.pie(rh_f, names='CSP', hole=0.6, color_discrete_sequence=COLORS)), use_container_width=True)
+                st.plotly_chart(clean_chart(px.pie(rh_f, names='CSP', hole=0.6, color_discrete_sequence=['#3b82f6', '#10b981', '#f59e0b', '#a855f7'])), use_container_width=True)
             st.markdown("</div>", unsafe_allow_html=True)
         with g2:
             st.markdown("<div class='card'><h3>Pyramide des Âges</h3>", unsafe_allow_html=True)
@@ -226,13 +363,13 @@ if rh is not None:
                 rh_f['Tranche'] = pd.cut(rh_f['Âge'], bins=[20,30,40,50,60,70], labels=["20-30","30-40","40-50","50-60","60+"]).astype(str)
                 pyr = rh_f.groupby(['Tranche', 'Sexe']).size().reset_index(name='Nb')
                 pyr['Nb'] = pyr.apply(lambda x: -x['Nb'] if x['Sexe']=='Homme' else x['Nb'], axis=1)
-                # VRAIE PYRAMIDE (BARRES HORIZONTALES)
                 fig = px.bar(pyr, x='Nb', y='Tranche', color='Sexe', orientation='h', 
                              color_discrete_map={'Homme': '#3b82f6', 'Femme': '#ec4899'})
                 fig.update_layout(xaxis=dict(tickvals=[-5, 0, 5], ticktext=['5', '0', '5']))
                 st.plotly_chart(clean_chart(fig), use_container_width=True)
             st.markdown("</div>", unsafe_allow_html=True)
 
+    # 2. SALARIÉS
     elif selected == "Salariés":
         st.title("🗂️ Gestion des Talents")
         col_list, col_detail = st.columns([1, 3])
@@ -241,7 +378,7 @@ if rh is not None:
             search = st.text_input("Rechercher", placeholder="Nom...")
             liste = sorted(rh_f['Nom'].unique().tolist())
             if search: liste = [n for n in liste if search.lower() in n.lower()]
-            choix = st.selectbox("Sélectionner un employé", liste) # LISTE DÉROULANTE
+            choix = st.selectbox("Sélectionner un employé", liste)
             st.markdown("</div>", unsafe_allow_html=True)
 
         with col_detail:
@@ -265,6 +402,7 @@ if rh is not None:
                     else: st.info("Aucune formation.")
                     st.markdown("</div>", unsafe_allow_html=True)
 
+    # 3. FORMATION
     elif selected == "Formation":
         st.title("🎓 Pilotage de la Formation")
         budget_total = form_f['Coût Formation (€)'].sum()
@@ -276,6 +414,7 @@ if rh is not None:
         st.dataframe(form_f, use_container_width=True)
         st.markdown("</div>", unsafe_allow_html=True)
 
+    # 4. RECRUTEMENT
     elif selected == "Recrutement":
         st.title("🎯 Talent Acquisition")
         total_rec = rec['Coût Recrutement (€)'].sum()
@@ -286,6 +425,7 @@ if rh is not None:
         st.dataframe(rec, use_container_width=True)
         st.markdown("</div>", unsafe_allow_html=True)
 
+    # 5. SIMULATION
     elif selected == "Simulation":
         st.title("🔮 Prospective Salariale")
         st.markdown("<div class='card'><h3>Paramètres</h3>", unsafe_allow_html=True)
@@ -296,6 +436,7 @@ if rh is not None:
         st.metric("Impact Financier", f"+ {impact:,.0f} €", delta="Coût Annuel", delta_color="inverse")
         st.plotly_chart(clean_chart(go.Figure(go.Waterfall(measure=["relative", "relative", "total"], x=["Actuel", "Impact", "Futur"], y=[ms_actuelle, impact, ms_actuelle+impact]))), use_container_width=True)
 
+    # 6. GESTION BDD
     elif selected == "Gestion BDD":
         st.title("🛠️ Centre de Gestion des Données")
         st.info("Ici, vous pouvez modifier directement toutes les données. Les changements sont sauvegardés dans Google Sheets.")
