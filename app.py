@@ -6,11 +6,12 @@ from datetime import datetime
 from fpdf import FPDF
 import gspread
 from google.oauth2.service_account import Credentials
+import time # Nécessaire pour le rechargement
 
 # Configuration
-st.set_page_config(page_title="Pilotage RH", layout="wide")
+st.set_page_config(page_title="Dashboard RH (Saisie)", layout="wide")
 
-# --- 1. AUTHENTIFICATION GOOGLE SHEETS ---
+# --- 1. AUTHENTIFICATION GOOGLE ---
 def connect_google_sheet():
     try:
         secrets = st.secrets["gcp_service_account"]
@@ -23,7 +24,7 @@ def connect_google_sheet():
         st.error(f"⚠️ Erreur connexion Google : {e}")
         st.stop()
 
-# --- 2. LOGIN SÉCURISÉ ---
+# --- 2. LOGIN ---
 if 'logged_in' not in st.session_state: st.session_state['logged_in'] = False
 if 'username' not in st.session_state: st.session_state['username'] = ""
 
@@ -44,8 +45,8 @@ if not st.session_state['logged_in']:
     st.title("🔒 Portail RH")
     c1,c2,c3 = st.columns([1,1,1])
     with c2:
-        st.text_input("Identifiant", key="input_user")
-        st.text_input("Mot de passe", type="password", key="input_password")
+        st.text_input("ID", key="input_user")
+        st.text_input("MDP", type="password", key="input_password")
         st.button("Connexion", on_click=check_login)
     st.stop()
 
@@ -61,14 +62,41 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
+# --- BARRE LATÉRALE (AVEC FORMULAIRE D'AJOUT) ---
 with st.sidebar:
     st.write(f"👤 **{st.session_state.get('username', 'Admin')}**")
     if st.button("Déconnexion"): logout()
     st.markdown("---")
+    
+    # --- NOUVEAU : FORMULAIRE D'AJOUT ---
+    with st.expander("➕ Ajouter un Salarié", expanded=False):
+        with st.form("add_employee"):
+            new_nom = st.text_input("Nom Prénom")
+            new_poste = st.text_input("Poste")
+            new_service = st.selectbox("Service", ["Vente", "IT", "RH", "Finance", "Marketing", "Support", "Direction"])
+            new_csp = st.selectbox("CSP", ["Cadre", "Employé", "ETAM", "Cadre Sup"])
+            new_salaire = st.number_input("Salaire (€)", value=2000, step=100)
+            
+            submitted = st.form_submit_button("Valider l'embauche")
+            
+            if submitted and new_nom:
+                try:
+                    sheet = connect_google_sheet()
+                    # 1. Ajout dans Données Sociales (Nom, Poste, Service, CSP...)
+                    # On met des valeurs vides "" pour les dates qu'on ne connait pas encore
+                    sheet.worksheet('Données Sociales').append_row([new_nom, new_poste, new_service, new_csp, "", "", "", "", "", ""])
+                    
+                    # 2. Ajout dans Salaires (Nom, Salaire...)
+                    sheet.worksheet('Salaires').append_row([new_nom, new_salaire, 0, 0, "Non"])
+                    
+                    st.success(f"{new_nom} ajouté !")
+                    st.cache_data.clear() # On vide le cache pour voir le nouveau salarié
+                    time.sleep(1)
+                    st.rerun() # On recharge la page
+                except Exception as e:
+                    st.error(f"Erreur : {e}")
 
-st.title("🚀 Pilotage Stratégique : RH & Finances")
-
-# --- 4. FONCTIONS UTILES ---
+# --- 4. FONCTIONS ---
 def create_pdf(emp, form_hist):
     pdf = FPDF()
     pdf.add_page()
@@ -166,10 +194,6 @@ def charger_donnees():
             if c in df_global.columns: 
                 df_global[c] = df_global[c].apply(clean_currency)
                 df_global[c] = pd.to_numeric(df_global[c], errors='coerce').fillna(0)
-
-        if 'Coût Recrutement (€)' in df_rec.columns:
-            df_rec['Coût Recrutement (€)'] = df_rec['Coût Recrutement (€)'].apply(clean_currency)
-            df_rec['Coût Recrutement (€)'] = pd.to_numeric(df_rec['Coût Recrutement (€)'], errors='coerce').fillna(0)
 
         if 'Au SMIC' not in df_global.columns: df_global['Au SMIC'] = 'Non'
         if 'Catégorie Métier' not in df_global.columns: df_global['Catégorie Métier'] = 'Non défini'
