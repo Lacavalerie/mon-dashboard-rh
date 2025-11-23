@@ -9,9 +9,9 @@ from google.oauth2.service_account import Credentials
 import google.generativeai as genai
 
 # Configuration
-st.set_page_config(page_title="Dashboard RH V54", layout="wide")
+st.set_page_config(page_title="Dashboard V55", layout="wide")
 
-# --- 1. AUTHENTIFICATION GOOGLE SHEETS ---
+# --- 1. AUTH GOOGLE SHEETS ---
 def connect_google_sheet():
     try:
         secrets = st.secrets["gcp_service_account"]
@@ -21,10 +21,10 @@ def connect_google_sheet():
         sheet = client.open("Dashboard_Data") 
         return sheet
     except Exception as e:
-        st.error(f"⚠️ Erreur connexion Google : {e}")
+        st.error(f"⚠️ Erreur Google Sheets : {e}")
         st.stop()
 
-# --- 2. CONFIGURATION IA (ROBUSTE) ---
+# --- 2. IA (VERSION DIAGNOSTIC) ---
 def configure_gemini():
     try:
         if "gemini" in st.secrets and "api_key" in st.secrets["gemini"]:
@@ -35,18 +35,14 @@ def configure_gemini():
     except: return False
 
 def ask_gemini(prompt):
-    # Liste des modèles à essayer par ordre de préférence
-    models_to_try = ['gemini-1.5-flash', 'gemini-1.5-pro', 'gemini-pro']
-    
-    for model_name in models_to_try:
-        try:
-            model = genai.GenerativeModel(model_name)
-            response = model.generate_content(prompt)
-            return response.text
-        except Exception:
-            continue # Si ça rate, on essaie le suivant
-            
-    return "Désolé, l'assistant est momentanément indisponible (Aucun modèle accessible)."
+    # On essaie le modèle standard actuel
+    try:
+        model = genai.GenerativeModel('gemini-1.5-flash')
+        response = model.generate_content(prompt)
+        return response.text
+    except Exception as e:
+        # Si ça plante, on renvoie l'erreur exacte pour comprendre
+        return f"ERREUR TECHNIQUE : {e}"
 
 # --- 3. LOGIN ---
 if 'logged_in' not in st.session_state: st.session_state['logged_in'] = False
@@ -58,7 +54,7 @@ def check_login():
     if user == "admin" and pwd == "rh123":
         st.session_state['logged_in'] = True
         st.session_state['username'] = user
-    else: st.error("Identifiant incorrect")
+    else: st.error("Erreur login")
 
 def logout():
     st.session_state['logged_in'] = False
@@ -69,8 +65,8 @@ if not st.session_state['logged_in']:
     st.title("🔒 Portail RH")
     c1,c2,c3 = st.columns([1,1,1])
     with c2:
-        st.text_input("Identifiant", key="input_user")
-        st.text_input("Mot de passe", type="password", key="input_password")
+        st.text_input("ID", key="input_user")
+        st.text_input("MDP", type="password", key="input_password")
         st.button("Connexion", on_click=check_login)
     st.stop()
 
@@ -149,6 +145,7 @@ def calculer_donnees_rh(df):
         df['Écart Svc'] = df['Salaire (€)'] - df['Moyenne Svc']
     return df
 
+# --- 6. CHARGEMENT ---
 @st.cache_data(ttl=60)
 def charger_donnees():
     try:
@@ -222,12 +219,10 @@ if rh is not None:
         "🤖 Assistant", "📂 Métiers", "🔍 Fiche", "📈 Rémunération", "🎓 Formation", "🎯 Recrutement", "💰 Budget", "🔮 Simulation"
     ])
 
-    # --- 0. ASSISTANT IA (VERSION MULTI-MODELES) ---
     with tab_ia:
         st.header("🤖 Assistant Expert RH")
         if configure_gemini():
-            st.info("Posez une question sur vos données ou sur le droit du travail.")
-            
+            st.info("Posez une question RH.")
             if "messages" not in st.session_state: st.session_state.messages = []
             for msg in st.session_state.messages:
                 with st.chat_message(msg["role"]): st.markdown(msg["content"])
@@ -238,16 +233,11 @@ if rh is not None:
                 
                 contexte = f"""
                 Tu es un Assistant Expert RH.
-                
-                1. DONNÉES ENTREPRISE :
+                DONNÉES :
                 - Effectif : {len(rh)}
-                - Masse salariale mensuelle : {rh['Salaire (€)'].sum():,.0f} €
+                - Masse salariale : {rh['Salaire (€)'].sum():,.0f} €
                 - Employés : {rh[['Nom', 'Poste', 'Salaire (€)', 'CSP']].to_string()}
                 - Recrutements : {rec[['Poste', 'Coût Recrutement (€)']].to_string() if not rec.empty else 'Aucun'}
-                
-                2. MISSION :
-                - Utilise les données ci-dessus si la question porte sur l'entreprise.
-                - Utilise tes connaissances générales RH/Juridiques sinon.
                 
                 Question : {prompt}
                 """
@@ -256,13 +246,10 @@ if rh is not None:
                 with st.chat_message("assistant"): st.markdown(reply)
                 st.session_state.messages.append({"role": "assistant", "content": reply})
         else:
-            st.warning("⚠️ Clé Gemini non configurée dans secrets.toml")
+            st.warning("⚠️ Clé Gemini non configurée")
 
-    # [LE RESTE EST STRICTEMENT IDENTIQUE V51]
-    # (Je ne le remets pas ici pour ne pas faire un message de 3km, 
-    # mais dans ton copier-coller, prends bien les onglets suivants du code précédent si besoin,
-    # ou demande-moi si tu veux que je remette TOUT le bloc).
-    # MAIS ATTENTION : Le code V51 complet est juste au-dessus, tu peux tout prendre.
+    # ... [Les autres onglets restent inchangés par rapport à la V51] ...
+    # (Je raccourcis ici pour la clarté, mais garde bien tout le reste du code !)
     
     with tab_metier:
         st.header("Cartographie Métiers")
