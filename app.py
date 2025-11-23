@@ -10,10 +10,7 @@ import time
 from streamlit_option_menu import option_menu
 
 # Configuration
-st.set_page_config(page_title="RH Cockpit V67", layout="wide", initial_sidebar_state="expanded")
-
-# --- PALETTE DE COULEURS CONTRASTÉES (ACCESSIBILITÉ) ---
-COLORS = ['#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899', '#06b6d4']
+st.set_page_config(page_title="RH Cockpit V68", layout="wide", initial_sidebar_state="expanded")
 
 # --- DESIGN ---
 st.markdown("""
@@ -42,6 +39,13 @@ st.markdown("""
     .kpi-lbl { font-size: 14px; color: #9ca3af; text-transform: uppercase; letter-spacing: 1px; font-weight: 600;}
     .alert-box { background-color: rgba(127, 29, 29, 0.5); color: #fca5a5 !important; padding: 15px; border-radius: 8px; border: 1px solid #ef4444; }
     [data-testid="stDataFrame"] { background-color: transparent !important; }
+    
+    /* Bouton Déconnexion Rouge */
+    div.stButton > button:first-child {
+        background-color: #ef4444;
+        color: white;
+        border: none;
+    }
     </style>
 """, unsafe_allow_html=True)
 
@@ -71,34 +75,36 @@ def save_data_to_google(df, worksheet_name):
         time.sleep(1)
         st.cache_data.clear()
         st.rerun()
-    except Exception as e: st.error(f"Erreur : {e}")
+    except Exception as e: st.error(f"Erreur sauvegarde : {e}")
 
+# --- GESTION LOGIN / LOGOUT ---
 if 'logged_in' not in st.session_state: st.session_state['logged_in'] = False
-def check_login():
-    if st.session_state['u'] == "admin" and st.session_state['p'] == "rh123": st.session_state['logged_in'] = True
-    else: st.error("Erreur")
-def logout(): st.session_state['logged_in'] = False; st.rerun()
 
+def check_login():
+    if st.session_state['u'] == "admin" and st.session_state['p'] == "rh123": 
+        st.session_state['logged_in'] = True
+    else: 
+        st.error("Identifiant ou mot de passe incorrect")
+
+def logout():
+    st.session_state['logged_in'] = False
+    st.cache_data.clear() # Vide le cache pour sécurité
+    st.rerun()
+
+# Écran de connexion
 if not st.session_state['logged_in']:
-    # On ajoute le Titre et le Logo ICI pour qu'ils soient visibles avant la connexion
-    st.markdown("""
-        <div style='text-align: center; margin-bottom: 50px;'>
-            <img src="https://cdn-icons-png.flaticon.com/512/3135/3135715.png" width="100">
-            <h1 style='color: white; margin-top: 20px;'>RH COCKPIT PRO</h1>
-            <p style='color: #94a3b8; font-size: 18px;'>Portail de Gestion Stratégique</p>
-        </div>
-    """, unsafe_allow_html=True)
-    
     c1,c2,c3 = st.columns([1,1,1])
     with c2:
         st.markdown("<div class='card'>", unsafe_allow_html=True)
-        st.subheader("🔒 Authentification")
-        st.text_input("Identifiant", key="u")
-        st.text_input("Mot de passe", type="password", key="p")
-        st.button("Se connecter", on_click=check_login, use_container_width=True)
+        st.title("🔒 Connexion")
+        st.text_input("ID", key="u")
+        st.text_input("MDP", type="password", key="p")
+        if st.button("Entrer"):
+            check_login()
         st.markdown("</div>", unsafe_allow_html=True)
     st.stop()
 
+# --- PDF & UTILITAIRES ---
 def create_pdf(emp, form_hist):
     pdf = FPDF()
     pdf.add_page()
@@ -141,6 +147,7 @@ def clean_chart(fig):
     )
     return fig
 
+# --- CHARGEMENT ---
 @st.cache_data(ttl=60)
 def load_data():
     try:
@@ -176,10 +183,10 @@ def load_data():
 
 rh, rec, form_detail, raw_data = load_data()
 
+# --- INTERFACE ---
 if rh is not None:
     
     with st.sidebar:
-        # AVATAR NEUTRE UNIVERSEL
         st.image("https://cdn-icons-png.flaticon.com/512/1077/1077114.png", width=60)
         
         selected = option_menu(
@@ -195,11 +202,19 @@ if rh is not None:
             }
         )
         st.markdown("---")
+        
+        # FILTRE SERVICE
         services = ['Tous'] + sorted(rh['Service'].unique().tolist()) if 'Service' in rh.columns else ['Tous']
         selected_service = st.selectbox("Filtrer par Service", services)
         rh_f = rh[rh['Service'] == selected_service] if selected_service != 'Tous' else rh
         form_f = form_detail[form_detail['Service'] == selected_service] if selected_service != 'Tous' else form_detail
+        
+        # BOUTON DÉCONNEXION (AJOUTÉ ICI)
+        st.markdown("---")
+        if st.button("🚪 Déconnexion", use_container_width=True):
+            logout()
 
+    # 1. DASHBOARD
     if selected == "Dashboard":
         st.title(f"Vue d'ensemble ({selected_service})")
         ms = rh_f['Salaire (€)'].sum() * 12 * 1.45
@@ -217,8 +232,8 @@ if rh is not None:
         with g1:
             st.markdown("<div class='card'><h3>Répartition CSP</h3>", unsafe_allow_html=True)
             if 'CSP' in rh_f.columns:
-                # COULEURS CONTRASTÉES ICI (Bleu, Vert, Orange, Violet)
-                st.plotly_chart(clean_chart(px.pie(rh_f, names='CSP', hole=0.6, color_discrete_sequence=COLORS)), use_container_width=True)
+                # COULEURS DISTINCTES V67
+                st.plotly_chart(clean_chart(px.pie(rh_f, names='CSP', hole=0.6, color_discrete_sequence=['#3b82f6', '#10b981', '#f59e0b', '#a855f7'])), use_container_width=True)
             st.markdown("</div>", unsafe_allow_html=True)
         with g2:
             st.markdown("<div class='card'><h3>Pyramide des Âges</h3>", unsafe_allow_html=True)
@@ -226,13 +241,13 @@ if rh is not None:
                 rh_f['Tranche'] = pd.cut(rh_f['Âge'], bins=[20,30,40,50,60,70], labels=["20-30","30-40","40-50","50-60","60+"]).astype(str)
                 pyr = rh_f.groupby(['Tranche', 'Sexe']).size().reset_index(name='Nb')
                 pyr['Nb'] = pyr.apply(lambda x: -x['Nb'] if x['Sexe']=='Homme' else x['Nb'], axis=1)
-                # VRAIE PYRAMIDE (BARRES HORIZONTALES)
                 fig = px.bar(pyr, x='Nb', y='Tranche', color='Sexe', orientation='h', 
                              color_discrete_map={'Homme': '#3b82f6', 'Femme': '#ec4899'})
                 fig.update_layout(xaxis=dict(tickvals=[-5, 0, 5], ticktext=['5', '0', '5']))
                 st.plotly_chart(clean_chart(fig), use_container_width=True)
             st.markdown("</div>", unsafe_allow_html=True)
 
+    # 2. SALARIÉS
     elif selected == "Salariés":
         st.title("🗂️ Gestion des Talents")
         col_list, col_detail = st.columns([1, 3])
@@ -241,7 +256,7 @@ if rh is not None:
             search = st.text_input("Rechercher", placeholder="Nom...")
             liste = sorted(rh_f['Nom'].unique().tolist())
             if search: liste = [n for n in liste if search.lower() in n.lower()]
-            choix = st.selectbox("Sélectionner un employé", liste) # LISTE DÉROULANTE
+            choix = st.selectbox("Sélectionner un employé", liste)
             st.markdown("</div>", unsafe_allow_html=True)
 
         with col_detail:
@@ -265,6 +280,7 @@ if rh is not None:
                     else: st.info("Aucune formation.")
                     st.markdown("</div>", unsafe_allow_html=True)
 
+    # 3. FORMATION
     elif selected == "Formation":
         st.title("🎓 Pilotage de la Formation")
         budget_total = form_f['Coût Formation (€)'].sum()
@@ -276,6 +292,7 @@ if rh is not None:
         st.dataframe(form_f, use_container_width=True)
         st.markdown("</div>", unsafe_allow_html=True)
 
+    # 4. RECRUTEMENT
     elif selected == "Recrutement":
         st.title("🎯 Talent Acquisition")
         total_rec = rec['Coût Recrutement (€)'].sum()
@@ -286,6 +303,7 @@ if rh is not None:
         st.dataframe(rec, use_container_width=True)
         st.markdown("</div>", unsafe_allow_html=True)
 
+    # 5. SIMULATION
     elif selected == "Simulation":
         st.title("🔮 Prospective Salariale")
         st.markdown("<div class='card'><h3>Paramètres</h3>", unsafe_allow_html=True)
@@ -296,6 +314,7 @@ if rh is not None:
         st.metric("Impact Financier", f"+ {impact:,.0f} €", delta="Coût Annuel", delta_color="inverse")
         st.plotly_chart(clean_chart(go.Figure(go.Waterfall(measure=["relative", "relative", "total"], x=["Actuel", "Impact", "Futur"], y=[ms_actuelle, impact, ms_actuelle+impact]))), use_container_width=True)
 
+    # 6. GESTION BDD
     elif selected == "Gestion BDD":
         st.title("🛠️ Centre de Gestion des Données")
         st.info("Ici, vous pouvez modifier directement toutes les données. Les changements sont sauvegardés dans Google Sheets.")
@@ -320,4 +339,3 @@ if rh is not None:
             edited_rec = st.data_editor(raw_data['Recrutement'], num_rows="dynamic", use_container_width=True)
             if st.button("💾 Sauvegarder Recrutements"): save_data_to_google(edited_rec, 'Recrutement')
             st.markdown("</div>", unsafe_allow_html=True)
-
