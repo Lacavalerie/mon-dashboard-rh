@@ -8,369 +8,311 @@ import gspread
 from google.oauth2.service_account import Credentials
 import time
 
-# Configuration
-st.set_page_config(page_title="Dashboard RH V60: Full Control", layout="wide")
+# --- CONFIGURATION PAGE ---
+st.set_page_config(page_title="RH Cockpit", layout="wide", initial_sidebar_state="expanded")
 
-# --- 1. AUTHENTIFICATION GOOGLE ---
+# --- CSS PERSONNALISÉ (DESIGN MODERNE) ---
+st.markdown("""
+    <style>
+    /* Fond sombre élégant */
+    .stApp { background-color: #0e1117; }
+    
+    /* Sidebar */
+    [data-testid="stSidebar"] { background-color: #161b22; border-right: 1px solid #30363d; }
+    
+    /* Cartes KPI (Glassmorphism) */
+    .kpi-card {
+        background-color: rgba(255, 255, 255, 0.05);
+        padding: 20px;
+        border-radius: 10px;
+        border: 1px solid rgba(255, 255, 255, 0.1);
+        text-align: center;
+        margin-bottom: 10px;
+    }
+    .kpi-value { font-size: 28px; font-weight: bold; color: #4ade80; }
+    .kpi-label { font-size: 14px; color: #a0a0a0; }
+    
+    /* Titres */
+    h1, h2, h3 { color: #f0f6fc !important; font-family: 'Segoe UI', sans-serif; }
+    
+    /* Alertes */
+    .alert-box { background-color: rgba(239, 68, 68, 0.2); color: #fca5a5; padding: 10px; border-radius: 5px; border: 1px solid #ef4444; }
+    </style>
+""", unsafe_allow_html=True)
+
+# --- FONCTIONS TECHNIQUES (Connexion, Login, PDF...) ---
 def connect_google_sheet():
     try:
         secrets = st.secrets["gcp_service_account"]
         scope = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
         creds = Credentials.from_service_account_info(secrets, scopes=scope)
         client = gspread.authorize(creds)
-        sheet = client.open("Dashboard_Data") 
-        return sheet
+        return client.open("Dashboard_Data") 
     except Exception as e:
-        st.error(f"⚠️ Erreur connexion Google : {e}")
+        st.error(f"⚠️ Erreur Google : {e}")
         st.stop()
 
-# --- 2. FONCTION SAUVEGARDE (Le Cœur du Système) ---
 def save_data_to_google(df, worksheet_name):
     try:
         sheet = connect_google_sheet()
         ws = sheet.worksheet(worksheet_name)
-        
-        # On nettoie les dates pour qu'elles soient compatibles JSON (String)
         df_to_save = df.copy()
         for col in df_to_save.columns:
             if pd.api.types.is_datetime64_any_dtype(df_to_save[col]):
                 df_to_save[col] = df_to_save[col].dt.strftime('%d/%m/%Y')
-        
-        # On remplace tout le contenu de l'onglet
         ws.clear()
-        # On remet les titres et les données (valeurs brutes)
         ws.update([df_to_save.columns.values.tolist()] + df_to_save.values.tolist())
-        st.success(f"✅ Sauvegarde réussie dans '{worksheet_name}' !")
-        st.cache_data.clear() # On vide le cache pour voir les modifs
+        st.toast(f"✅ {worksheet_name} mis à jour !", icon="💾")
         time.sleep(1)
+        st.cache_data.clear()
         st.rerun()
-    except Exception as e:
-        st.error(f"Erreur de sauvegarde : {e}")
+    except Exception as e: st.error(f"Erreur sauvegarde : {e}")
 
-# --- 3. LOGIN ---
 if 'logged_in' not in st.session_state: st.session_state['logged_in'] = False
-if 'username' not in st.session_state: st.session_state['username'] = ""
-
 def check_login():
-    user = st.session_state['input_user']
-    pwd = st.session_state['input_password']
-    if user == "admin" and pwd == "rh123":
-        st.session_state['logged_in'] = True
-        st.session_state['username'] = user
-    else: st.error("Identifiant incorrect")
-
-def logout():
-    st.session_state['logged_in'] = False
-    st.rerun()
+    if st.session_state['u'] == "admin" and st.session_state['p'] == "rh123": st.session_state['logged_in'] = True
+    else: st.error("Erreur")
+def logout(): st.session_state['logged_in'] = False; st.rerun()
 
 if not st.session_state['logged_in']:
-    st.markdown("""<style>.stApp {background-color: #1a2639;} h1 {color: white; text-align: center;}</style>""", unsafe_allow_html=True)
-    st.title("🔒 Portail RH")
     c1,c2,c3 = st.columns([1,1,1])
     with c2:
-        st.text_input("ID", key="input_user")
-        st.text_input("MDP", type="password", key="input_password")
-        st.button("Connexion", on_click=check_login)
+        st.title("🔒 Connexion")
+        st.text_input("ID", key="u")
+        st.text_input("MDP", type="password", key="p")
+        st.button("Entrer", on_click=check_login)
     st.stop()
 
-# --- 4. DESIGN ---
-st.markdown("""
-    <style>
-    .stApp { background-color: #1a2639; }
-    [data-testid="stSidebar"] { background-color: #111b2b; }
-    h1, h2, h3, p, div, label, span, li { color: #FFFFFF !important; }
-    [data-testid="stMetric"] { background-color: #2d3e55; border-radius: 8px; border-left: 5px solid #4ade80; }
-    [data-testid="stMetricValue"] { color: #FFFFFF !important; }
-    .smic-alert { background-color: #7f1d1d; color: white; padding: 10px; border-radius: 5px; border: 1px solid #ef4444; }
-    </style>
-""", unsafe_allow_html=True)
-
-with st.sidebar:
-    st.write(f"👤 **{st.session_state.get('username', 'Admin')}**")
-    if st.button("Déconnexion"): logout()
-    st.markdown("---")
-
-st.title("🚀 Pilotage Stratégique : RH & Finances")
-
-# --- 5. FONCTIONS UTILES ---
+# --- FONCTIONS MÉTIER ---
 def create_pdf(emp, form_hist):
     pdf = FPDF()
     pdf.add_page()
     pdf.set_font("Arial", size=12)
-    pdf.set_font("Arial", 'B', 16)
     pdf.cell(200, 10, txt=f"FICHE : {emp['Nom']}", ln=True, align='C')
     pdf.ln(10)
-    pdf.set_font("Arial", size=12)
     pdf.cell(200, 10, txt=f"Poste : {emp['Poste']} ({emp.get('CSP', 'N/A')})", ln=True)
     pdf.cell(200, 10, txt=f"Service : {emp['Service']}", ln=True)
-    pdf.cell(200, 10, txt=f"Anciennete : {emp.get('Ancienneté (ans)', 0):.1f} ans", ln=True)
-    pdf.ln(10)
-    pdf.set_font("Arial", 'B', 14)
-    pdf.cell(200, 10, txt="REMUNERATION", ln=True)
-    pdf.set_font("Arial", size=12)
+    pdf.ln(5)
     pdf.cell(200, 10, txt=f"Salaire Base : {emp.get('Salaire (€)', 0):.0f} EUR", ln=True)
-    pdf.cell(200, 10, txt=f"Primes : {emp.get('Primes (€)', 0):.0f} EUR", ln=True)
-    pdf.ln(10)
-    pdf.set_font("Arial", 'B', 14)
-    pdf.cell(200, 10, txt="HISTORIQUE FORMATION", ln=True)
-    pdf.set_font("Arial", size=12)
+    pdf.ln(5)
+    pdf.cell(200, 10, txt="FORMATIONS :", ln=True)
     if not form_hist.empty:
         for i, row in form_hist.iterrows():
-            txt = f"- {row['Type Formation']} ({row['Coût Formation (€)']} EUR)"
-            try: pdf.cell(200, 10, txt=txt.encode('latin-1', 'replace').decode('latin-1'), ln=True)
-            except: pdf.cell(200, 10, txt="Erreur encodage", ln=True)
-    else:
-        pdf.cell(200, 10, txt="Aucune formation.", ln=True)
+            try: pdf.cell(200, 10, txt=f"- {row['Type Formation']}", ln=True)
+            except: pdf.cell(200, 10, txt="- (Erreur encodage titre)", ln=True)
     return pdf.output(dest='S').encode('latin-1')
 
-def clean_chart(fig):
-    fig.update_layout(paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)", font=dict(color="white"), xaxis=dict(showgrid=False, color="white"), yaxis=dict(showgrid=True, gridcolor="#444444", color="white"))
-    return fig
-
 def clean_currency(val):
-    if isinstance(val, str):
-        val = val.replace('€', '').replace('\xa0', '').replace(' ', '').replace(',', '.')
-    return val
+    if isinstance(val, str): val = val.replace('€', '').replace(' ', '').replace('\xa0', '').replace(',', '.')
+    try: return float(val)
+    except: return 0
 
-def calculer_donnees_rh(df):
+def calculer_donnees(df):
     today = datetime.now()
     if 'Date Naissance' in df.columns:
         df['Date Naissance'] = pd.to_datetime(df['Date Naissance'], errors='coerce')
         df['Âge'] = df['Date Naissance'].apply(lambda x: (today - x).days // 365 if pd.notnull(x) else 0)
-    if 'Date Entrée' in df.columns:
-        df['Date Entrée'] = pd.to_datetime(df['Date Entrée'], errors='coerce')
-        df['Ancienneté (ans)'] = df['Date Entrée'].apply(lambda x: (today - x).days / 365 if pd.notnull(x) else 0)
-    if 'Service' in df.columns and 'Salaire (€)' in df.columns:
-        moyennes = df.groupby('Service')['Salaire (€)'].mean().reset_index()
-        moyennes = moyennes.rename(columns={'Salaire (€)': 'Moyenne Svc'})
-        df = pd.merge(df, moyennes, on='Service', how='left')
-        df['Écart Svc'] = df['Salaire (€)'] - df['Moyenne Svc']
     return df
 
-# --- 6. CHARGEMENT ---
+# --- CHARGEMENT DONNÉES ---
 @st.cache_data(ttl=60)
-def charger_donnees():
+def load_data():
     try:
         sheet = connect_google_sheet()
-        
-        df_social = pd.DataFrame(sheet.worksheet('Données Sociales').get_all_records())
-        df_sal = pd.DataFrame(sheet.worksheet('Salaires').get_all_records())
-        df_form = pd.DataFrame(sheet.worksheet('Formation').get_all_records())
-        df_rec = pd.DataFrame(sheet.worksheet('Recrutement').get_all_records())
-        df_fin = pd.DataFrame(sheet.worksheet('Finances').get_all_records())
-
-        # Nettoyage des colonnes (IMPORTANT)
-        for df in [df_social, df_sal, df_form, df_rec, df_fin]:
+        data = {}
+        for name in ['Données Sociales', 'Salaires', 'Formation', 'Recrutement', 'Finances']:
+            df = pd.DataFrame(sheet.worksheet(name).get_all_records())
             df.columns = [c.strip() for c in df.columns]
+            data[name] = df
 
-        if 'Primes(€)' in df_sal.columns: df_sal.rename(columns={'Primes(€)': 'Primes (€)'}, inplace=True)
-        if 'Cout Formation (€)' in df_form.columns: df_form.rename(columns={'Cout Formation (€)': 'Coût Formation (€)'}, inplace=True)
-        if 'Coût Formation' in df_form.columns: df_form.rename(columns={'Coût Formation': 'Coût Formation (€)'}, inplace=True)
-        if 'Type de Formation' in df_form.columns: df_form.rename(columns={'Type de Formation': 'Type Formation'}, inplace=True)
-
-        # FUSION
-        if 'Nom' in df_social.columns and 'Nom' in df_sal.columns:
-            df_global = pd.merge(df_social, df_sal, on='Nom', how='left')
-        else: return None, None, None, None, None
-
-        if 'Nom' in df_form.columns and 'Coût Formation (€)' in df_form.columns:
-            df_form['Coût Formation (€)'] = df_form['Coût Formation (€)'].apply(clean_currency)
-            df_form['Coût Formation (€)'] = pd.to_numeric(df_form['Coût Formation (€)'], errors='coerce').fillna(0)
-            df_formation_detail = pd.merge(df_form, df_social[['Nom', 'Service', 'CSP']], on='Nom', how='left')
-            form_group = df_form.groupby('Nom')['Coût Formation (€)'].sum().reset_index()
-            df_global = pd.merge(df_global, form_group, on='Nom', how='left')
-            df_global['Coût Formation (€)'] = df_global['Coût Formation (€)'].fillna(0)
-        else:
-            df_global['Coût Formation (€)'] = 0
-            df_formation_detail = pd.DataFrame()
-
-        for col in ['Date Ouverture Poste', 'Date Clôture Poste']:
-            if col in df_rec.columns: df_rec[col] = pd.to_datetime(df_rec[col], dayfirst=True, errors='coerce')
+        # Corrections & Typage
+        if 'Primes(€)' in data['Salaires'].columns: data['Salaires'].rename(columns={'Primes(€)': 'Primes (€)'}, inplace=True)
         
-        cols_num = ['Primes (€)', 'Salaire (€)', 'Primes Futures (€)', 'Évaluation (1-5)']
-        for c in cols_num:
-            if c in df_global.columns: 
-                df_global[c] = df_global[c].apply(clean_currency)
-                df_global[c] = pd.to_numeric(df_global[c], errors='coerce').fillna(0)
+        # Fusion
+        df_global = pd.merge(data['Données Sociales'], data['Salaires'], on='Nom', how='left')
         
-        if 'Coût Recrutement (€)' in df_rec.columns:
-             df_rec['Coût Recrutement (€)'] = df_rec['Coût Recrutement (€)'].apply(clean_currency)
-             df_rec['Coût Recrutement (€)'] = pd.to_numeric(df_rec['Coût Recrutement (€)'], errors='coerce').fillna(0)
-
-        if 'Au SMIC' not in df_global.columns: df_global['Au SMIC'] = 'Non'
-        if 'Catégorie Métier' not in df_global.columns: df_global['Catégorie Métier'] = 'Non défini'
-
-        df_global = calculer_donnees_rh(df_global)
+        # Formation Aggrégée
+        if 'Coût Formation' in data['Formation'].columns: data['Formation'].rename(columns={'Coût Formation': 'Coût Formation (€)'}, inplace=True)
+        data['Formation']['Coût Formation (€)'] = data['Formation']['Coût Formation (€)'].apply(clean_currency)
         
-        # On retourne les RAW DATA aussi pour l'édition
-        return df_global, df_fin, df_rec, df_formation_detail, df_social, df_sal, df_form 
+        form_agg = data['Formation'].groupby('Nom')['Coût Formation (€)'].sum().reset_index()
+        df_global = pd.merge(df_global, form_agg, on='Nom', how='left')
+        df_global['Coût Formation (€)'] = df_global['Coût Formation (€)'].fillna(0)
 
+        # Recrutement
+        data['Recrutement']['Coût Recrutement (€)'] = data['Recrutement']['Coût Recrutement (€)'].apply(clean_currency)
+        
+        # Nettoyage Global
+        for col in ['Salaire (€)', 'Primes (€)']:
+            if col in df_global.columns: df_global[col] = df_global[col].apply(clean_currency)
+        
+        df_global = calculer_donnees(df_global)
+        return df_global, data['Recrutement'], data['Formation'], data
     except Exception as e:
-        st.error(f"Erreur Google Sheets : {e}")
-        return None, None, None, None, None, None, None
+        st.error(f"Erreur Load : {e}")
+        return None, None, None, None
 
-rh, fin, rec, form_detail, raw_social, raw_sal, raw_form = charger_donnees()
+rh, rec, form_detail, raw_data = load_data()
 
+# --- INTERFACE UTILISATEUR ---
 if rh is not None:
     
-    # --- TABS ---
-    # J'ai ajouté "🛠️ Gestion BDD" en premier
-    tab_admin, tab_metier, tab_fiche, tab_rem, tab_form, tab_rec, tab_budget, tab_simul = st.tabs([
-        "🛠️ Gestion BDD", "📂 Métiers", "🔍 Fiche", "📈 Rémunération", "🎓 Formation", "🎯 Recrutement", "💰 Budget", "🔮 Simulation"
-    ])
-
-    # --- 0. GESTION BDD (LE MODE ÉDITION) ---
-    with tab_admin:
-        st.header("🛠️ Gestion de la Base de Données")
-        st.info("Modifiez les tableaux ci-dessous. Les changements sont envoyés directement à Google Sheets.")
-
-        choix_table = st.selectbox("Quelle table modifier ?", ["Données Sociales (Employés)", "Salaires", "Formation", "Recrutement"])
+    # BARRE LATÉRALE (NAVIGATION)
+    with st.sidebar:
+        st.title("📊 Menu")
+        menu = st.radio("Navigation", ["🏠 Vue d'ensemble", "👥 Collaborateurs", "🎯 Recrutement", "🔮 Simulation", "⚙️ Administration"])
         
-        if choix_table == "Données Sociales (Employés)":
-            st.subheader("Employés & Postes")
-            # On affiche l'éditeur
-            edited_df = st.data_editor(raw_social, num_rows="dynamic", use_container_width=True)
-            # Bouton de sauvegarde
-            if st.button("💾 SAUVEGARDER les modifications (Social)"):
-                save_data_to_google(edited_df, 'Données Sociales')
-
-        elif choix_table == "Salaires":
-            st.subheader("Salaires & Primes")
-            edited_df = st.data_editor(raw_sal, num_rows="dynamic", use_container_width=True)
-            if st.button("💾 SAUVEGARDER les modifications (Salaires)"):
-                save_data_to_google(edited_df, 'Salaires')
-
-        elif choix_table == "Formation":
-            st.subheader("Historique Formations")
-            edited_df = st.data_editor(raw_form, num_rows="dynamic", use_container_width=True)
-            if st.button("💾 SAUVEGARDER les modifications (Formation)"):
-                save_data_to_google(edited_df, 'Formation')
-
-        elif choix_table == "Recrutement":
-            st.subheader("Suivi Recrutement")
-            edited_df = st.data_editor(rec, num_rows="dynamic", use_container_width=True)
-            if st.button("💾 SAUVEGARDER les modifications (Recrutement)"):
-                save_data_to_google(edited_df, 'Recrutement')
-
-    # --- LES AUTRES ONGLETS (AFFICHAGE) ---
-    
-    st.sidebar.header("Filtres")
-    liste_services = ['Tous'] + sorted(rh['Service'].unique().tolist()) if 'Service' in rh.columns else ['Tous']
-    filtre_service = st.sidebar.selectbox("Service", liste_services)
-    rh_f = rh[rh['Service'] == filtre_service] if filtre_service != 'Tous' else rh
-    if not form_detail.empty and 'Service' in form_detail.columns and filtre_service != 'Tous':
-        form_f = form_detail[form_detail['Service'] == filtre_service]
-    else: form_f = form_detail
-
-    with tab_metier:
-        st.header("Cartographie Métiers")
-        c1, c2 = st.columns([1, 1])
-        with c1:
-            if 'CSP' in rh_f.columns and 'Poste' in rh_f.columns:
-                fig_sun = px.sunburst(rh_f, path=['CSP', 'Poste'], values='Salaire (€)', title="Masse Salariale", color='CSP', color_discrete_sequence=px.colors.qualitative.Pastel)
-                st.plotly_chart(clean_chart(fig_sun), use_container_width=True)
-        with c2:
-            st.subheader("Annuaire")
-            if 'CSP' in rh_f.columns and 'Poste' in rh_f.columns and 'Nom' in rh_f.columns:
-                df_d = rh_f.groupby(['CSP', 'Poste'])['Nom'].apply(lambda x: ', '.join(x)).reset_index()
-                st.dataframe(df_d, hide_index=True, use_container_width=True)
-
-    with tab_fiche:
-        st.header("Dossier Individuel")
-        liste_employes = sorted(rh_f['Nom'].unique().tolist())
-        choix_employe = st.selectbox("Salarié :", liste_employes)
-        if choix_employe:
-            emp = rh[rh['Nom'] == choix_employe].iloc[0]
-            col_titre, col_btn = st.columns([3, 1])
-            with col_titre: st.subheader(f"👤 {emp['Nom']}")
-            with col_btn:
-                hist = form_detail[form_detail['Nom'] == choix_employe] if not form_detail.empty else pd.DataFrame()
-                try:
-                    pdf_data = create_pdf(emp, hist)
-                    st.download_button(label="📥 TÉLÉCHARGER PDF", data=pdf_data, file_name=f"Fiche_{emp['Nom']}.pdf", mime="application/pdf", use_container_width=True)
-                except Exception as e: st.error(f"Erreur PDF: {e}")
-            col_id1, col_id2, col_id3, col_id4 = st.columns(4)
-            col_id1.info(f"**Poste :** {emp['Poste']}")
-            col_id2.info(f"**Service :** {emp['Service']}")
-            col_id3.info(f"**Ancienneté :** {emp.get('Ancienneté (ans)', 0):.1f} ans")
-            col_id4.info(f"**CSP :** {emp.get('CSP', 'N/A')}")
-            st.markdown("---")
-            c1, c2 = st.columns([2, 1])
-            with c1:
-                sal = emp.get('Salaire (€)', 0)
-                prime_act = emp.get('Primes (€)', 0)
-                prime_fut = emp.get('Primes Futures (€)', 0)
-                k1, k2, k3 = st.columns(3)
-                k1.metric("Base", f"{sal:,.0f} €")
-                k2.metric("Primes", f"{prime_act:,.0f} €")
-                k3.metric("Futur", f"{prime_fut:,.0f} €", delta="Prévu")
-                st.plotly_chart(clean_chart(px.bar(x=['Actuel', 'Projeté'], y=[sal+prime_act, sal+prime_act+prime_fut], title="Trajectoire", text_auto=True)), use_container_width=True)
-            with c2:
-                st.subheader("Statut")
-                if str(emp.get('Au SMIC', 'No')).lower() == 'oui': st.markdown('<div class="smic-alert">⚠️ Au SMIC</div>', unsafe_allow_html=True)
-                else: st.success("✅ Conforme")
-            st.subheader("🎓 Formations")
-            if not hist.empty: st.dataframe(hist[['Type Formation', 'Coût Formation (€)']], hide_index=True, use_container_width=True)
-            else: st.info("Aucune.")
-
-    with tab_rem:
-        st.header("Rémunération")
-        k1, k2, k3 = st.columns(3)
-        k1.metric("Moyenne", f"{rh_f['Salaire (€)'].mean():,.0f} €")
-        k2.metric("Masse", f"{rh_f['Salaire (€)'].sum():,.0f} €")
-        if 'Sexe' in rh_f.columns:
-            df_s = rh_f.groupby('Sexe')['Salaire (€)'].mean()
-            ecart = ((df_s.get('Homme', 0) - df_s.get('Femme', 0)) / df_s.get('Homme', 1)) * 100 if 'Homme' in df_s else 0
-            k3.metric("Ecart H/F", f"{ecart:.1f} %")
         st.markdown("---")
-        if 'Évaluation (1-5)' in rh_f.columns:
-            fig_talents = px.scatter(rh_f, x="Évaluation (1-5)", y="Salaire (€)", size="Primes (€)", color="CSP", hover_name="Nom", text="Nom", title="Talents")
-            st.plotly_chart(clean_chart(fig_talents), use_container_width=True)
+        st.header("Filtres")
+        services = ['Tous'] + sorted(rh['Service'].unique().tolist()) if 'Service' in rh.columns else ['Tous']
+        selected_service = st.selectbox("Service", services)
+        
+        # Filtrage Global
+        rh_f = rh[rh['Service'] == selected_service] if selected_service != 'Tous' else rh
 
-    with tab_form:
-        st.header("Formation")
-        if not form_f.empty:
-            st.metric("Budget", f"{form_f['Coût Formation (€)'].sum():,.0f} €")
-            c1, c2 = st.columns(2)
-            with c1:
-                if 'Type Formation' in form_f.columns: st.plotly_chart(clean_chart(px.pie(form_f, names='Type Formation', values='Coût Formation (€)', hole=0.4)), use_container_width=True)
-            with c2:
-                if 'CSP' in form_f.columns: st.plotly_chart(clean_chart(px.bar(form_f.groupby('CSP')['Coût Formation (€)'].sum().reset_index(), x='CSP', y='Coût Formation (€)')), use_container_width=True)
-        else: st.info("Pas de données.")
-
-    with tab_rec:
-        st.header("Recrutement")
-        avg_time = rec['Temps Recrutement (jours)'].mean() if 'Temps Recrutement (jours)' in rec.columns else 0
-        if 'Date Clôture Poste' in rec.columns and 'Date Ouverture Poste' in rec.columns:
-             rec['Temps'] = (rec['Date Clôture Poste'] - rec['Date Ouverture Poste']).dt.days
-             avg_time = rec['Temps'].mean()
-        total_cout_rec = rec['Coût Recrutement (€)'].sum() if 'Coût Recrutement (€)' in rec.columns else 0
-        nb_candidats = rec['Nombre Candidats'].sum() if 'Nombre Candidats' in rec.columns else 0
-        c1, c2, c3 = st.columns(3)
-        c1.metric("Temps Moyen", f"{avg_time:.0f} jours")
-        c2.metric("Coût Total", f"{total_cout_rec:,.0f} €")
-        c3.metric("Candidats", f"{nb_candidats:,.0f}")
-        st.markdown("---")
-        if 'Canal Sourcing' in rec.columns:
-            df_src = rec.groupby('Canal Sourcing').size().reset_index(name='Nombre')
-            st.plotly_chart(clean_chart(px.bar(df_src, x='Canal Sourcing', y='Nombre', color='Canal Sourcing', title="Sources")), use_container_width=True)
-
-    with tab_budget:
-        st.header("Budget")
+    # --- PAGE 1 : VUE D'ENSEMBLE (DASHBOARD MACRO) ---
+    if menu == "🏠 Vue d'ensemble":
+        st.header(f"Tableau de Bord ({selected_service})")
+        
+        # 1. Ligne de KPIs (Cartes CSS)
         ms = rh_f['Salaire (€)'].sum() * 12 * 1.45
-        form = rh_f['Coût Formation (€)'].sum()
-        rec_c = rec['Coût Recrutement (€)'].sum()
+        nb = len(rh_f)
+        age_moy = rh_f['Âge'].mean() if 'Âge' in rh_f.columns else 0
+        cout_form = rh_f['Coût Formation (€)'].sum()
+        
         k1, k2, k3, k4 = st.columns(4)
-        k1.metric("Global", f"{ms+form+rec_c:,.0f} €")
-        k2.metric("Salaires", f"{ms:,.0f} €")
-        k3.metric("Formation", f"{form:,.0f} €")
-        k4.metric("Recrutement", f"{rec_c:,.0f} €")
-        st.plotly_chart(clean_chart(px.pie(names=['Salaires', 'Formation', 'Recrutement'], values=[ms, form, rec_c], title="Répartition")), use_container_width=True)
+        k1.markdown(f"<div class='kpi-card'><div class='kpi-value'>{nb}</div><div class='kpi-label'>Effectif</div></div>", unsafe_allow_html=True)
+        k2.markdown(f"<div class='kpi-card'><div class='kpi-value'>{ms/1000:.0f} k€</div><div class='kpi-label'>Masse Salariale Annuelle</div></div>", unsafe_allow_html=True)
+        k3.markdown(f"<div class='kpi-card'><div class='kpi-value'>{age_moy:.0f} ans</div><div class='kpi-label'>Âge Moyen</div></div>", unsafe_allow_html=True)
+        k4.markdown(f"<div class='kpi-card'><div class='kpi-value'>{cout_form:,.0f} €</div><div class='kpi-label'>Invest. Formation</div></div>", unsafe_allow_html=True)
+        
+        st.markdown("---")
+        
+        # 2. Graphiques Principaux
+        g1, g2 = st.columns(2)
+        with g1:
+            st.subheader("Répartition par CSP")
+            if 'CSP' in rh_f.columns:
+                fig = px.pie(rh_f, names='CSP', hole=0.6, color_discrete_sequence=px.colors.sequential.Teal)
+                fig.update_layout(paper_bgcolor="rgba(0,0,0,0)", font_color="white")
+                st.plotly_chart(fig, use_container_width=True)
+        with g2:
+            st.subheader("Pyramide des Âges")
+            if 'Âge' in rh_f.columns and 'Sexe' in rh_f.columns:
+                rh_f['Tranche'] = pd.cut(rh_f['Âge'], bins=[20,30,40,50,60,70], labels=["20-30","30-40","40-50","50-60","60+"]).astype(str)
+                pyr = rh_f.groupby(['Tranche', 'Sexe']).size().reset_index(name='Nb')
+                pyr['Nb'] = pyr.apply(lambda x: -x['Nb'] if x['Sexe']=='Homme' else x['Nb'], axis=1)
+                fig = px.bar(pyr, x='Nb', y='Tranche', color='Sexe', orientation='h', color_discrete_map={'Homme':'#3b82f6', 'Femme':'#ec4899'})
+                fig.update_layout(paper_bgcolor="rgba(0,0,0,0)", font_color="white")
+                st.plotly_chart(fig, use_container_width=True)
 
-    with tab_simul:
-        st.header("Simulation")
-        augm = st.sidebar.slider("Hausse (%)", 0.0, 100.0, 0.0, 0.5)
-        cout = rh_f['Salaire (€)'].sum() * (augm/100) * 12 * 1.45
-        st.metric("Impact", f"{cout:,.0f} €", delta="Surcoût", delta_color="inverse")
-        marge = fin['Flux'].sum() if 'Flux' in fin.columns else 0
-        st.plotly_chart(clean_chart(go.Figure(go.Waterfall(measure=["relative", "relative", "total"], x=["Actuel", "Coût", "Futur"], y=[marge, -cout, marge-cout], decreasing={"marker":{"color":"#fb923c"}}, increasing={"marker":{"color":"#4ade80"}}, totals={"marker":{"color":"#60a5fa"}}))), use_container_width=True)
+    # --- PAGE 2 : COLLABORATEURS (FICHE INDIVIDUELLE) ---
+    elif menu == "👥 Collaborateurs":
+        st.header("Gestion Individuelle")
+        
+        col_sel, col_fic = st.columns([1, 3])
+        
+        with col_sel:
+            st.subheader("Annuaire")
+            search = st.text_input("🔍 Rechercher un nom")
+            liste = sorted(rh_f['Nom'].unique().tolist())
+            if search: liste = [n for n in liste if search.lower() in n.lower()]
+            choix = st.radio("Employés", liste, label_visibility="collapsed")
+        
+        with col_fic:
+            if choix:
+                emp = rh[rh['Nom'] == choix].iloc[0]
+                
+                # En-tête fiche
+                c_a, c_b = st.columns([3, 1])
+                with c_a: 
+                    st.subheader(f"👤 {emp['Nom']}")
+                    st.caption(f"{emp['Poste']} | {emp['Service']} | {emp.get('CSP', '')}")
+                with c_b:
+                    hist = form_detail[form_detail['Nom'] == choix] if not form_detail.empty else pd.DataFrame()
+                    try:
+                        pdf = create_pdf(emp, hist)
+                        st.download_button("📄 PDF", data=pdf, file_name=f"{emp['Nom']}.pdf", mime="application/pdf", use_container_width=True)
+                    except: st.error("Erreur PDF")
+                
+                # Données salariales
+                st.markdown("#### Rémunération")
+                sal_cols = st.columns(3)
+                sal_cols[0].metric("Fixe", f"{emp.get('Salaire (€)', 0):,.0f} €")
+                sal_cols[1].metric("Primes", f"{emp.get('Primes (€)', 0):,.0f} €")
+                sal_cols[2].metric("Total Brut", f"{(emp.get('Salaire (€)', 0)+emp.get('Primes (€)', 0)):,.0f} €")
+                
+                if str(emp.get('Au SMIC', 'No')).lower() == 'oui': 
+                    st.markdown('<div class="alert-box">⚠️ <b>Alerte SMIC</b> : Vérifier le minimum légal.</div>', unsafe_allow_html=True)
+
+                # Historique Formations
+                st.markdown("#### Formations Suivies")
+                if not hist.empty:
+                    st.dataframe(hist[['Type Formation', 'Coût Formation (€)']], hide_index=True, use_container_width=True)
+                else:
+                    st.info("Pas d'historique de formation.")
+
+    # --- PAGE 3 : RECRUTEMENT ---
+    elif menu == "🎯 Recrutement":
+        st.header("Suivi du Recrutement")
+        k1, k2 = st.columns(2)
+        total_rec = rec['Coût Recrutement (€)'].sum()
+        k1.metric("Budget Recrutement", f"{total_rec:,.0f} €")
+        k2.metric("Postes Ouverts", len(rec))
+        
+        st.markdown("### Postes en cours")
+        st.dataframe(rec[['Poste', 'Date Ouverture Poste', 'Canal Sourcing', 'Coût Recrutement (€)']], hide_index=True, use_container_width=True)
+        
+        st.markdown("### Performance des Canaux")
+        if 'Canal Sourcing' in rec.columns:
+            df_src = rec.groupby('Canal Sourcing').size().reset_index(name='Nb')
+            fig = px.bar(df_src, x='Canal Sourcing', y='Nb', color='Canal Sourcing')
+            fig.update_layout(paper_bgcolor="rgba(0,0,0,0)", font_color="white")
+            st.plotly_chart(fig, use_container_width=True)
+
+    # --- PAGE 4 : SIMULATION ---
+    elif menu == "🔮 Simulation":
+        st.header("Simulateur Budgétaire")
+        
+        c_sim1, c_sim2 = st.columns([1, 2])
+        with c_sim1:
+            st.info("Simulez une augmentation générale.")
+            augm = st.slider("Hausse (%)", 0.0, 20.0, 2.0, 0.5)
+            
+            ms_actuelle = rh_f['Salaire (€)'].sum() * 12 * 1.45
+            impact = ms_actuelle * (augm/100)
+            
+            st.metric("Impact Financier (Annuel)", f"{impact:,.0f} €", delta="Coût Supplémentaire", delta_color="inverse")
+            st.metric("Nouveau Budget", f"{(ms_actuelle + impact):,.0f} €")
+            
+        with c_sim2:
+            fig = go.Figure(go.Waterfall(
+                measure=["relative", "relative", "total"],
+                x=["Budget Actuel", "Hausse", "Budget Projeté"],
+                y=[ms_actuelle, impact, ms_actuelle+impact],
+                decreasing={"marker":{"color":"#fb923c"}}, increasing={"marker":{"color":"#ef4444"}}, totals={"marker":{"color":"#3b82f6"}}
+            ))
+            fig.update_layout(title="Projection des Coûts", paper_bgcolor="rgba(0,0,0,0)", font_color="white")
+            st.plotly_chart(fig, use_container_width=True)
+
+    # --- PAGE 5 : ADMINISTRATION (CRUD) ---
+    elif menu == "⚙️ Administration":
+        st.header("🛠️ Centre de Gestion des Données")
+        st.warning("⚠️ Les modifications ici sont directement enregistrées dans Google Sheets.")
+        
+        tab_edit1, tab_edit2, tab_edit3 = st.tabs(["👥 Employés", "💰 Salaires", "🎯 Recrutement"])
+        
+        with tab_edit1:
+            st.subheader("Éditer les Employés")
+            edited_rh = st.data_editor(raw_data['Données Sociales'], num_rows="dynamic", use_container_width=True)
+            if st.button("Sauvegarder Employés"): save_data_to_google(edited_rh, 'Données Sociales')
+            
+        with tab_edit2:
+            st.subheader("Éditer les Salaires")
+            edited_sal = st.data_editor(raw_data['Salaires'], num_rows="dynamic", use_container_width=True)
+            if st.button("Sauvegarder Salaires"): save_data_to_google(edited_sal, 'Salaires')
+            
+        with tab_edit3:
+            st.subheader("Éditer les Recrutements")
+            edited_rec = st.data_editor(raw_data['Recrutement'], num_rows="dynamic", use_container_width=True)
+            if st.button("Sauvegarder Recrutement"): save_data_to_google(edited_rec, 'Recrutement')
