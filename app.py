@@ -80,13 +80,22 @@ def check_login():
 def logout(): st.session_state['logged_in'] = False; st.rerun()
 
 if not st.session_state['logged_in']:
+    # On ajoute le Titre et le Logo ICI pour qu'ils soient visibles avant la connexion
+    st.markdown("""
+        <div style='text-align: center; margin-bottom: 50px;'>
+            <img src="https://cdn-icons-png.flaticon.com/512/3135/3135715.png" width="100">
+            <h1 style='color: white; margin-top: 20px;'>RH COCKPIT PRO</h1>
+            <p style='color: #94a3b8; font-size: 18px;'>Portail de Gestion Stratégique</p>
+        </div>
+    """, unsafe_allow_html=True)
+    
     c1,c2,c3 = st.columns([1,1,1])
     with c2:
         st.markdown("<div class='card'>", unsafe_allow_html=True)
-        st.title("🔒 Connexion")
-        st.text_input("ID", key="u")
-        st.text_input("MDP", type="password", key="p")
-        st.button("Entrer", on_click=check_login)
+        st.subheader("🔒 Authentification")
+        st.text_input("Identifiant", key="u")
+        st.text_input("Mot de passe", type="password", key="p")
+        st.button("Se connecter", on_click=check_login, use_container_width=True)
         st.markdown("</div>", unsafe_allow_html=True)
     st.stop()
 
@@ -311,3 +320,4 @@ if rh is not None:
             edited_rec = st.data_editor(raw_data['Recrutement'], num_rows="dynamic", use_container_width=True)
             if st.button("💾 Sauvegarder Recrutements"): save_data_to_google(edited_rec, 'Recrutement')
             st.markdown("</div>", unsafe_allow_html=True)
+
