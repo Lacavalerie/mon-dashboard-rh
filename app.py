@@ -9,7 +9,7 @@ from google.oauth2.service_account import Credentials
 import google.generativeai as genai
 
 # Configuration
-st.set_page_config(page_title="Dashboard RH Pro", layout="wide")
+st.set_page_config(page_title="Dashboard RH V54", layout="wide")
 
 # --- 1. AUTHENTIFICATION GOOGLE SHEETS ---
 def connect_google_sheet():
@@ -24,7 +24,7 @@ def connect_google_sheet():
         st.error(f"⚠️ Erreur connexion Google : {e}")
         st.stop()
 
-# --- 2. CONFIGURATION IA (GEMINI 1.5 FLASH) ---
+# --- 2. CONFIGURATION IA (ROBUSTE) ---
 def configure_gemini():
     try:
         if "gemini" in st.secrets and "api_key" in st.secrets["gemini"]:
@@ -35,13 +35,18 @@ def configure_gemini():
     except: return False
 
 def ask_gemini(prompt):
-    try:
-        # UTILISATION DU DERNIER MODÈLE STABLE
-        model = genai.GenerativeModel('gemini-1.5-flash')
-        response = model.generate_content(prompt)
-        return response.text
-    except Exception as e:
-        return f"L'assistant est indisponible (Erreur modèle) : {e}"
+    # Liste des modèles à essayer par ordre de préférence
+    models_to_try = ['gemini-1.5-flash', 'gemini-1.5-pro', 'gemini-pro']
+    
+    for model_name in models_to_try:
+        try:
+            model = genai.GenerativeModel(model_name)
+            response = model.generate_content(prompt)
+            return response.text
+        except Exception:
+            continue # Si ça rate, on essaie le suivant
+            
+    return "Désolé, l'assistant est momentanément indisponible (Aucun modèle accessible)."
 
 # --- 3. LOGIN ---
 if 'logged_in' not in st.session_state: st.session_state['logged_in'] = False
@@ -144,7 +149,6 @@ def calculer_donnees_rh(df):
         df['Écart Svc'] = df['Salaire (€)'] - df['Moyenne Svc']
     return df
 
-# --- 6. CHARGEMENT ---
 @st.cache_data(ttl=60)
 def charger_donnees():
     try:
@@ -218,7 +222,7 @@ if rh is not None:
         "🤖 Assistant", "📂 Métiers", "🔍 Fiche", "📈 Rémunération", "🎓 Formation", "🎯 Recrutement", "💰 Budget", "🔮 Simulation"
     ])
 
-    # --- 0. ASSISTANT IA (MODÈLE FLASH) ---
+    # --- 0. ASSISTANT IA (VERSION MULTI-MODELES) ---
     with tab_ia:
         st.header("🤖 Assistant Expert RH")
         if configure_gemini():
@@ -237,7 +241,7 @@ if rh is not None:
                 
                 1. DONNÉES ENTREPRISE :
                 - Effectif : {len(rh)}
-                - Masse salariale : {rh['Salaire (€)'].sum():,.0f} €
+                - Masse salariale mensuelle : {rh['Salaire (€)'].sum():,.0f} €
                 - Employés : {rh[['Nom', 'Poste', 'Salaire (€)', 'CSP']].to_string()}
                 - Recrutements : {rec[['Poste', 'Coût Recrutement (€)']].to_string() if not rec.empty else 'Aucun'}
                 
@@ -254,7 +258,12 @@ if rh is not None:
         else:
             st.warning("⚠️ Clé Gemini non configurée dans secrets.toml")
 
-    # [RESTE DES ONGLETS IDENTIQUE]
+    # [LE RESTE EST STRICTEMENT IDENTIQUE V51]
+    # (Je ne le remets pas ici pour ne pas faire un message de 3km, 
+    # mais dans ton copier-coller, prends bien les onglets suivants du code précédent si besoin,
+    # ou demande-moi si tu veux que je remette TOUT le bloc).
+    # MAIS ATTENTION : Le code V51 complet est juste au-dessus, tu peux tout prendre.
+    
     with tab_metier:
         st.header("Cartographie Métiers")
         c1, c2 = st.columns([1, 1])
