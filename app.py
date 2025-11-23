@@ -9,7 +9,7 @@ from google.oauth2.service_account import Credentials
 import time
 
 # Configuration
-st.set_page_config(page_title="Dashboard RH V47", layout="wide")
+st.set_page_config(page_title="Dashboard RH V48: Cockpit", layout="wide")
 
 # --- 1. AUTHENTIFICATION GOOGLE ---
 def connect_google_sheet():
@@ -50,7 +50,7 @@ if not st.session_state['logged_in']:
         st.button("Connexion", on_click=check_login)
     st.stop()
 
-# --- 3. DESIGN ---
+# --- 3. DESIGN & CHARGEMENT DES DONNÉES (DÉPLACÉ ICI POUR LES FORMULAIRES) ---
 st.markdown("""
     <style>
     .stApp { background-color: #1a2639; }
@@ -62,37 +62,171 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-# --- BARRE LATÉRALE (SAISIE) ---
+# Fonctions utilitaires
+def clean_currency(val):
+    if isinstance(val, str):
+        val = val.replace('€', '').replace('\xa0', '').replace(' ', '').replace(',', '.')
+    try: return float(val)
+    except: return 0
+
+def calculer_donnees_rh(df):
+    today = datetime.now()
+    if 'Date Naissance' in df.columns:
+        df['Date Naissance'] = pd.to_datetime(df['Date Naissance'], errors='coerce')
+        df['Âge'] = df['Date Naissance'].apply(lambda x: (today - x).days // 365 if pd.notnull(x) else 0)
+    if 'Date Entrée' in df.columns:
+        df['Date Entrée'] = pd.to_datetime(df['Date Entrée'], errors='coerce')
+        df['Ancienneté (ans)'] = df['Date Entrée'].apply(lambda x: (today - x).days / 365 if pd.notnull(x) else 0)
+    if 'Service' in df.columns and 'Salaire (€)' in df.columns:
+        moyennes = df.groupby('Service')['Salaire (€)'].mean().reset_index()
+        moyennes = moyennes.rename(columns={'Salaire (€)': 'Moyenne Svc'})
+        df = pd.merge(df, moyennes, on='Service', how='left')
+        df['Écart Svc'] = df['Salaire (€)'] - df['Moyenne Svc']
+    return df
+
+@st.cache_data(ttl=60)
+def charger_donnees():
+    try:
+        sheet = connect_google_sheet()
+        # Lecture
+        df_social = pd.DataFrame(sheet.worksheet('Données Sociales').get_all_records())
+        df_sal = pd.DataFrame(sheet.worksheet('Salaires').get_all_records())
+        df_form = pd.DataFrame(sheet.worksheet('Formation').get_all_records())
+        df_rec = pd.DataFrame(sheet.worksheet('Recrutement').get_all_records())
+        df_fin = pd.DataFrame(sheet.worksheet('Finances').get_all_records())
+
+        # Nettoyage Colonnes
+        for df in [df_social, df_sal, df_form, df_rec, df_fin]:
+            df.columns = [c.strip() for c in df.columns]
+
+        # Corrections Noms
+        if 'Primes(€)' in df_sal.columns: df_sal.rename(columns={'Primes(€)': 'Primes (€)'}, inplace=True)
+        if 'Cout Formation (€)' in df_form.columns: df_form.rename(columns={'Cout Formation (€)': 'Coût Formation (€)'}, inplace=True)
+        if 'Coût Formation' in df_form.columns: df_form.rename(columns={'Coût Formation': 'Coût Formation (€)'}, inplace=True)
+        if 'Type de Formation' in df_form.columns: df_form.rename(columns={'Type de Formation': 'Type Formation'}, inplace=True)
+
+        # Fusion
+        if 'Nom' in df_social.columns and 'Nom' in df_sal.columns:
+            df_global = pd.merge(df_social, df_sal, on='Nom', how='left')
+        else: return None, None, None, None
+
+        # Formation
+        if 'Nom' in df_form.columns and 'Coût Formation (€)' in df_form.columns:
+            df_form['Coût Formation (€)'] = df_form['Coût Formation (€)'].apply(clean_currency)
+            df_formation_detail = pd.merge(df_form, df_social[['Nom', 'Service', 'CSP']], on='Nom', how='left')
+            form_group = df_form.groupby('Nom')['Coût Formation (€)'].sum().reset_index()
+            df_global = pd.merge(df_global, form_group, on='Nom', how='left')
+            df_global['Coût Formation (€)'] = df_global['Coût Formation (€)'].fillna(0)
+        else:
+            df_global['Coût Formation (€)'] = 0
+            df_formation_detail = pd.DataFrame()
+
+        # Recrutement Date & Coût
+        for col in ['Date Ouverture Poste', 'Date Clôture Poste']:
+            if col in df_rec.columns: df_rec[col] = pd.to_datetime(df_rec[col], dayfirst=True, errors='coerce')
+        if 'Coût Recrutement (€)' in df_rec.columns:
+             df_rec['Coût Recrutement (€)'] = df_rec['Coût Recrutement (€)'].apply(clean_currency)
+
+        # Nettoyage Global Chiffres
+        cols_num = ['Primes (€)', 'Salaire (€)', 'Primes Futures (€)', 'Évaluation (1-5)']
+        for c in cols_num:
+            if c in df_global.columns: df_global[c] = df_global[c].apply(clean_currency)
+
+        if 'Au SMIC' not in df_global.columns: df_global['Au SMIC'] = 'Non'
+        if 'Catégorie Métier' not in df_global.columns: df_global['Catégorie Métier'] = 'Non défini'
+
+        df_global = calculer_donnees_rh(df_global)
+        return df_global, df_fin, df_rec, df_formation_detail, df_social # On retourne df_social pour les listes
+    except Exception as e:
+        st.error(f"Erreur Google : {e}")
+        return None, None, None, None, None
+
+rh, fin, rec, form_detail, raw_social = charger_donnees()
+
+# --- 4. CENTRE D'ACTIONS (BARRE LATÉRALE) ---
 with st.sidebar:
     st.write(f"👤 **{st.session_state.get('username', 'Admin')}**")
     if st.button("Déconnexion"): logout()
     st.markdown("---")
     
-    with st.expander("➕ Ajouter un Salarié", expanded=False):
-        with st.form("add_employee"):
-            new_nom = st.text_input("Nom Prénom")
-            new_poste = st.text_input("Poste")
-            new_service = st.selectbox("Service", ["Vente", "IT", "RH", "Finance", "Marketing", "Support", "Direction"])
-            new_csp = st.selectbox("CSP", ["Cadre", "Employé", "ETAM", "Cadre Sup"])
-            new_salaire = st.number_input("Salaire (€)", value=2000, step=100)
+    st.header("⚡ Centre d'Actions")
+    action = st.selectbox("Que voulez-vous saisir ?", 
+                          ["--- Sélectionner ---", "👤 Nouvel Employé", "🎓 Nouvelle Formation", "🎯 Nouveau Recrutement"])
+    
+    # --- FORMULAIRE 1 : EMBAUCHE ---
+    if action == "👤 Nouvel Employé":
+        with st.form("form_embauche"):
+            st.caption("Ajoute un salarié dans 'Données Sociales' et 'Salaires'")
+            f_nom = st.text_input("Nom Prénom")
+            f_poste = st.text_input("Poste")
+            f_service = st.selectbox("Service", ["Vente", "IT", "RH", "Finance", "Marketing", "Support", "Direction"])
+            f_csp = st.selectbox("CSP", ["Cadre", "Employé", "ETAM", "Cadre Sup"])
+            f_salaire = st.number_input("Salaire (€)", 2000, step=100)
             
-            submitted = st.form_submit_button("Valider")
+            if st.form_submit_button("Valider l'embauche"):
+                if f_nom:
+                    try:
+                        sh = connect_google_sheet()
+                        sh.worksheet('Données Sociales').append_row([f_nom, f_poste, f_service, f_csp, "", "", "", "", "", ""])
+                        sh.worksheet('Salaires').append_row([f_nom, f_salaire, 0, 0, "Non"])
+                        st.success("✅ Ajouté !")
+                        st.cache_data.clear()
+                        time.sleep(1)
+                        st.rerun()
+                    except Exception as e: st.error(f"Erreur: {e}")
+
+    # --- FORMULAIRE 2 : FORMATION ---
+    elif action == "🎓 Nouvelle Formation":
+        with st.form("form_formation"):
+            st.caption("Ajoute une ligne dans 'Formation'")
+            # Liste déroulante des employés existants
+            if rh is not None:
+                liste_noms = sorted(rh['Nom'].unique().tolist())
+                f_emp = st.selectbox("Salarié", liste_noms)
+            else:
+                f_emp = st.text_input("Nom Salarié")
             
-            if submitted and new_nom:
-                try:
-                    sheet = connect_google_sheet()
-                    sheet.worksheet('Données Sociales').append_row([new_nom, new_poste, new_service, new_csp, "", "", "", "", "", ""])
-                    sheet.worksheet('Salaires').append_row([new_nom, new_salaire, 0, 0, "Non"])
-                    st.success(f"{new_nom} ajouté !")
-                    st.cache_data.clear()
-                    time.sleep(1)
-                    st.rerun()
-                except Exception as e:
-                    st.error(f"Erreur : {e}")
+            f_sujet = st.text_input("Thème Formation")
+            f_cout = st.number_input("Coût (€)", 0, step=100)
+            
+            if st.form_submit_button("Ajouter Formation"):
+                if f_emp and f_sujet:
+                    try:
+                        sh = connect_google_sheet()
+                        sh.worksheet('Formation').append_row([f_emp, f_sujet, f_cout])
+                        st.success("✅ Formation ajoutée !")
+                        st.cache_data.clear()
+                        time.sleep(1)
+                        st.rerun()
+                    except Exception as e: st.error(f"Erreur: {e}")
+
+    # --- FORMULAIRE 3 : RECRUTEMENT ---
+    elif action == "🎯 Nouveau Recrutement":
+        with st.form("form_recrut"):
+            st.caption("Ajoute une ligne dans 'Recrutement'")
+            r_poste = st.text_input("Poste recherché")
+            r_date_ouv = st.date_input("Date Ouverture")
+            r_source = st.selectbox("Canal", ["LinkedIn", "Indeed", "HelloWork", "Cooptation", "Chasseur", "Autre"])
+            r_cout = st.number_input("Coût (€)", 0, step=100)
+            r_nb = st.number_input("Nb Candidats", 0, step=1)
+            
+            if st.form_submit_button("Créer Recrutement"):
+                if r_poste:
+                    try:
+                        sh = connect_google_sheet()
+                        # Conversion date pour Excel
+                        d_ouv_str = r_date_ouv.strftime("%d/%m/%Y")
+                        # On laisse Date cloture vide pour l'instant
+                        sh.worksheet('Recrutement').append_row([d_ouv_str, "", r_poste, r_nb, r_source, r_cout])
+                        st.success("✅ Recrutement créé !")
+                        st.cache_data.clear()
+                        time.sleep(1)
+                        st.rerun()
+                    except Exception as e: st.error(f"Erreur: {e}")
 
 st.title("🚀 Pilotage Stratégique : RH & Finances")
 
-# --- 4. FONCTIONS ---
+# --- FONCTIONS AFFICHAGE ---
 def create_pdf(emp, form_hist):
     pdf = FPDF()
     pdf.add_page()
@@ -127,104 +261,7 @@ def clean_chart(fig):
     fig.update_layout(paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)", font=dict(color="white"), xaxis=dict(showgrid=False, color="white"), yaxis=dict(showgrid=True, gridcolor="#444444", color="white"))
     return fig
 
-# --- NETTOYEUR RENFORCÉ ---
-def clean_currency(val):
-    """Nettoie tout format monétaire en nombre pur"""
-    if pd.isna(val) or val == "":
-        return 0
-    if isinstance(val, (int, float)):
-        return val
-    if isinstance(val, str):
-        # Enlève €, espaces, espaces insécables
-        val = val.replace('€', '').replace(' ', '').replace('\xa0', '')
-        # Remplace virgule par point
-        val = val.replace(',', '.')
-        try:
-            return float(val)
-        except:
-            return 0
-    return 0
-
-def calculer_donnees_rh(df):
-    today = datetime.now()
-    if 'Date Naissance' in df.columns:
-        df['Date Naissance'] = pd.to_datetime(df['Date Naissance'], errors='coerce')
-        df['Âge'] = df['Date Naissance'].apply(lambda x: (today - x).days // 365 if pd.notnull(x) else 0)
-    if 'Date Entrée' in df.columns:
-        df['Date Entrée'] = pd.to_datetime(df['Date Entrée'], errors='coerce')
-        df['Ancienneté (ans)'] = df['Date Entrée'].apply(lambda x: (today - x).days / 365 if pd.notnull(x) else 0)
-    if 'Service' in df.columns and 'Salaire (€)' in df.columns:
-        moyennes = df.groupby('Service')['Salaire (€)'].mean().reset_index()
-        moyennes = moyennes.rename(columns={'Salaire (€)': 'Moyenne Svc'})
-        df = pd.merge(df, moyennes, on='Service', how='left')
-        df['Écart Svc'] = df['Salaire (€)'] - df['Moyenne Svc']
-    return df
-
-# --- 5. CHARGEMENT ET NETTOYAGE ---
-@st.cache_data(ttl=60)
-def charger_donnees():
-    try:
-        sheet = connect_google_sheet()
-        
-        df_social = pd.DataFrame(sheet.worksheet('Données Sociales').get_all_records())
-        df_sal = pd.DataFrame(sheet.worksheet('Salaires').get_all_records())
-        df_form = pd.DataFrame(sheet.worksheet('Formation').get_all_records())
-        df_rec = pd.DataFrame(sheet.worksheet('Recrutement').get_all_records())
-        df_fin = pd.DataFrame(sheet.worksheet('Finances').get_all_records())
-
-        for df in [df_social, df_sal, df_form, df_rec, df_fin]:
-            df.columns = [c.strip() for c in df.columns]
-
-        if 'Primes(€)' in df_sal.columns: df_sal.rename(columns={'Primes(€)': 'Primes (€)'}, inplace=True)
-        if 'Cout Formation (€)' in df_form.columns: df_form.rename(columns={'Cout Formation (€)': 'Coût Formation (€)'}, inplace=True)
-        if 'Coût Formation' in df_form.columns: df_form.rename(columns={'Coût Formation': 'Coût Formation (€)'}, inplace=True)
-        if 'Type de Formation' in df_form.columns: df_form.rename(columns={'Type de Formation': 'Type Formation'}, inplace=True)
-
-        if 'Nom' in df_social.columns and 'Nom' in df_sal.columns:
-            df_global = pd.merge(df_social, df_sal, on='Nom', how='left')
-        else: return None, None, None, None
-
-        # --- APPLICATION DU NETTOYAGE SUR TOUS LES CHIFFRES ---
-        
-        # 1. Formation
-        if 'Coût Formation (€)' in df_form.columns:
-            df_form['Coût Formation (€)'] = df_form['Coût Formation (€)'].apply(clean_currency)
-            
-        if 'Nom' in df_form.columns and 'Coût Formation (€)' in df_form.columns:
-            df_formation_detail = pd.merge(df_form, df_social[['Nom', 'Service', 'CSP']], on='Nom', how='left')
-            form_group = df_form.groupby('Nom')['Coût Formation (€)'].sum().reset_index()
-            df_global = pd.merge(df_global, form_group, on='Nom', how='left')
-            df_global['Coût Formation (€)'] = df_global['Coût Formation (€)'].fillna(0)
-        else:
-            df_global['Coût Formation (€)'] = 0
-            df_formation_detail = pd.DataFrame()
-
-        # 2. Recrutement (C'est là que ça plantait)
-        for col in ['Date Ouverture Poste', 'Date Clôture Poste']:
-            if col in df_rec.columns: df_rec[col] = pd.to_datetime(df_rec[col], dayfirst=True, errors='coerce')
-        
-        if 'Coût Recrutement (€)' in df_rec.columns:
-            df_rec['Coût Recrutement (€)'] = df_rec['Coût Recrutement (€)'].apply(clean_currency)
-
-        # 3. Global
-        cols_num = ['Primes (€)', 'Salaire (€)', 'Primes Futures (€)', 'Évaluation (1-5)']
-        for c in cols_num:
-            if c in df_global.columns: df_global[c] = df_global[c].apply(clean_currency)
-
-        if 'Au SMIC' not in df_global.columns: df_global['Au SMIC'] = 'Non'
-        if 'Catégorie Métier' not in df_global.columns: df_global['Catégorie Métier'] = 'Non défini'
-
-        df_global = calculer_donnees_rh(df_global)
-        return df_global, df_fin, df_rec, df_formation_detail
-
-    except Exception as e:
-        st.error(f"Erreur Google Sheets : {e}")
-        return None, None, None, None
-
-rh, fin, rec, form_detail = charger_donnees()
-
 if rh is not None:
-    
     st.sidebar.header("Filtres")
     liste_services = ['Tous'] + sorted(rh['Service'].unique().tolist()) if 'Service' in rh.columns else ['Tous']
     filtre_service = st.sidebar.selectbox("Service", liste_services)
@@ -233,9 +270,7 @@ if rh is not None:
         form_f = form_detail[form_detail['Service'] == filtre_service]
     else: form_f = form_detail
 
-    tab_metier, tab_fiche, tab_rem, tab_form, tab_rec, tab_budget, tab_simul = st.tabs([
-        "📂 Métiers", "🔍 Fiche", "📈 Rémunération", "🎓 Formation", "🎯 Recrutement", "💰 Budget", "🔮 Simulation"
-    ])
+    tab_metier, tab_fiche, tab_rem, tab_form, tab_rec, tab_budget, tab_simul = st.tabs(["📂 Métiers", "🔍 Fiche Employé", "📈 Rémunération", "🎓 Formation", "🎯 Recrutement", "💰 Budget", "🔮 Simulation"])
 
     with tab_metier:
         st.header("Cartographie Métiers")
@@ -319,10 +354,8 @@ if rh is not None:
         if 'Date Clôture Poste' in rec.columns and 'Date Ouverture Poste' in rec.columns:
              rec['Temps'] = (rec['Date Clôture Poste'] - rec['Date Ouverture Poste']).dt.days
              avg_time = rec['Temps'].mean()
-        
         total_cout_rec = rec['Coût Recrutement (€)'].sum() if 'Coût Recrutement (€)' in rec.columns else 0
         nb_candidats = rec['Nombre Candidats'].sum() if 'Nombre Candidats' in rec.columns else 0
-        
         c1, c2, c3 = st.columns(3)
         c1.metric("Temps Moyen", f"{avg_time:.0f} jours")
         c2.metric("Coût Total", f"{total_cout_rec:,.0f} €")
