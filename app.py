@@ -6,33 +6,24 @@ from datetime import datetime
 from fpdf import FPDF
 import gspread
 from google.oauth2.service_account import Credentials
-import google.generativeai as genai # Le cerveau de Google
 
 # Configuration
-st.set_page_config(page_title="Dashboard V50: Gemini IA", layout="wide")
+st.set_page_config(page_title="Dashboard V42: Fix Chiffres", layout="wide")
 
-# --- AUTH GOOGLE SHEETS ---
+# --- AUTH GOOGLE ---
 def connect_google_sheet():
     try:
         secrets = st.secrets["gcp_service_account"]
         scope = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
         creds = Credentials.from_service_account_info(secrets, scopes=scope)
         client = gspread.authorize(creds)
-        # ID ou Nom du Sheet
+        # REMPLACE PAR L'ID DE TON SHEET (celui que tu avais mis avant)
+        # OU LAISSE LE NOM SI CA MARCHE
         sheet = client.open("Dashboard_Data") 
         return sheet
     except Exception as e:
-        st.error(f"⚠️ Erreur connexion Google Sheets : {e}")
+        st.error(f"⚠️ Erreur connexion Google : {e}")
         st.stop()
-
-# --- CONFIGURATION GEMINI ---
-def configure_gemini():
-    try:
-        api_key = st.secrets["gemini"]["api_key"]
-        genai.configure(api_key=api_key)
-        return True
-    except Exception:
-        return False
 
 # --- LOGIN ---
 if 'logged_in' not in st.session_state: st.session_state['logged_in'] = False
@@ -52,7 +43,7 @@ def logout():
 
 if not st.session_state['logged_in']:
     st.markdown("""<style>.stApp {background-color: #1a2639;} h1 {color: white; text-align: center;}</style>""", unsafe_allow_html=True)
-    st.title("🔒 Espace RH (Gemini)")
+    st.title("🔒 Espace RH (Cloud)")
     c1,c2,c3 = st.columns([1,1,1])
     with c2:
         st.text_input("ID", key="input_user")
@@ -69,8 +60,6 @@ st.markdown("""
     [data-testid="stMetric"] { background-color: #2d3e55; border-radius: 8px; border-left: 5px solid #4ade80; }
     [data-testid="stMetricValue"] { color: #FFFFFF !important; }
     .smic-alert { background-color: #7f1d1d; color: white; padding: 10px; border-radius: 5px; border: 1px solid #ef4444; }
-    /* Chatbot style */
-    .stChatMessage { background-color: #2d3e55; border-radius: 10px; margin-bottom: 10px; }
     </style>
 """, unsafe_allow_html=True)
 
@@ -131,9 +120,14 @@ def calculer_donnees_rh(df):
         df['Écart Svc'] = df['Salaire (€)'] - df['Moyenne Svc']
     return df
 
+# --- NETTOYEUR DE MONNAIE ---
 def clean_currency(val):
+    """Transforme '2 000,00 €' en 2000.00"""
     if isinstance(val, str):
-        val = val.replace('€', '').replace('\xa0', '').replace(' ', '').replace(',', '.')
+        # On enlève le symbole euro, les espaces insécables (\xa0) et les espaces normaux
+        val = val.replace('€', '').replace('\xa0', '').replace(' ', '')
+        # On remplace la virgule par un point
+        val = val.replace(',', '.')
     return val
 
 @st.cache_data(ttl=60)
@@ -150,24 +144,34 @@ def charger_donnees():
         for df in [df_social, df_sal, df_form, df_rec, df_fin]:
             df.columns = [c.strip() for c in df.columns]
 
+        # CORRECTIONS NOMS COLONNES
         if 'Primes(€)' in df_sal.columns: df_sal.rename(columns={'Primes(€)': 'Primes (€)'}, inplace=True)
-        if 'Cout Formation (€)' in df_form.columns: df_form.rename(columns={'Cout Formation (€)': 'Coût Formation (€)'}, inplace=True)
+        
+        # ICI : Correction pour ta colonne Formation (qui n'avait pas le (€))
         if 'Coût Formation' in df_form.columns: df_form.rename(columns={'Coût Formation': 'Coût Formation (€)'}, inplace=True)
+        if 'Cout Formation (€)' in df_form.columns: df_form.rename(columns={'Cout Formation (€)': 'Coût Formation (€)'}, inplace=True)
+        
         if 'Type de Formation' in df_form.columns: df_form.rename(columns={'Type de Formation': 'Type Formation'}, inplace=True)
 
+        # FUSION
         if 'Nom' in df_social.columns and 'Nom' in df_sal.columns:
             df_global = pd.merge(df_social, df_sal, on='Nom', how='left')
         else: return None, None, None, None
 
-        # Nettoyage Chiffres
+        # --- NETTOYAGE DES CHIFFRES AVANT CALCUL ---
+        cols_argent = ['Salaire (€)', 'Primes (€)', 'Primes Futures (€)', 'Coût Formation (€)', 'Coût Recrutement (€)']
+        
+        # On applique le nettoyeur sur Formation
         if 'Coût Formation (€)' in df_form.columns:
             df_form['Coût Formation (€)'] = df_form['Coût Formation (€)'].apply(clean_currency)
             df_form['Coût Formation (€)'] = pd.to_numeric(df_form['Coût Formation (€)'], errors='coerce').fillna(0)
-        
+
+        # On applique le nettoyeur sur Recrutement
         if 'Coût Recrutement (€)' in df_rec.columns:
             df_rec['Coût Recrutement (€)'] = df_rec['Coût Recrutement (€)'].apply(clean_currency)
             df_rec['Coût Recrutement (€)'] = pd.to_numeric(df_rec['Coût Recrutement (€)'], errors='coerce').fillna(0)
 
+        # --- SUITE FUSION ---
         if 'Nom' in df_form.columns and 'Coût Formation (€)' in df_form.columns:
             df_formation_detail = pd.merge(df_form, df_social[['Nom', 'Service', 'CSP']], on='Nom', how='left')
             form_group = df_form.groupby('Nom')['Coût Formation (€)'].sum().reset_index()
@@ -180,10 +184,10 @@ def charger_donnees():
         for col in ['Date Ouverture Poste', 'Date Clôture Poste']:
             if col in df_rec.columns: df_rec[col] = pd.to_datetime(df_rec[col], dayfirst=True, errors='coerce')
         
-        cols_num = ['Primes (€)', 'Salaire (€)', 'Primes Futures (€)', 'Évaluation (1-5)']
-        for c in cols_num:
+        # Nettoyage du global (Salaires)
+        for c in ['Primes (€)', 'Salaire (€)', 'Primes Futures (€)', 'Évaluation (1-5)']:
             if c in df_global.columns: 
-                df_global[c] = df_global[c].apply(clean_currency)
+                df_global[c] = df_global[c].apply(clean_currency) # On nettoie aussi ici
                 df_global[c] = pd.to_numeric(df_global[c], errors='coerce').fillna(0)
 
         if 'Au SMIC' not in df_global.columns: df_global['Au SMIC'] = 'Non'
@@ -208,67 +212,10 @@ if rh is not None:
         form_f = form_detail[form_detail['Service'] == filtre_service]
     else: form_f = form_detail
 
-    # --- TABS ---
-    tab_ia, tab_metier, tab_fiche, tab_rem, tab_form, tab_rec, tab_budget, tab_simul = st.tabs([
-        "🤖 Assistant IA", "📂 Métiers", "🔍 Fiche", "📈 Rémunération", "🎓 Formation", "🎯 Recrutement", "💰 Budget", "🔮 Simulation"
+    tab_metier, tab_fiche, tab_rem, tab_form, tab_rec, tab_budget, tab_simul = st.tabs([
+        "📂 Métiers", "🔍 Fiche Employé", "📈 Rémunération", "🎓 Formation", "🎯 Recrutement", "💰 Budget", "🔮 Simulation"
     ])
 
-    # --- 0. ASSISTANT IA (NOUVEAU) ---
-    with tab_ia:
-        st.header("🤖 Assistant RH (Propulsé par Gemini)")
-        
-        gemini_ok = configure_gemini()
-        
-        if not gemini_ok:
-            st.warning("⚠️ Clé API Gemini manquante dans secrets.toml. Ajoutez [gemini] api_key='...'")
-        else:
-            st.info("Posez une question sur vos données (ex: 'Qui a le plus gros salaire ?', 'Rédige une annonce pour un comptable').")
-            
-            # Initialisation historique chat
-            if "messages" not in st.session_state:
-                st.session_state.messages = []
-
-            # Afficher historique
-            for message in st.session_state.messages:
-                with st.chat_message(message["role"]):
-                    st.markdown(message["content"])
-
-            # Zone de saisie
-            if prompt := st.chat_input("Votre question RH..."):
-                # 1. Affiche message utilisateur
-                st.session_state.messages.append({"role": "user", "content": prompt})
-                with st.chat_message("user"):
-                    st.markdown(prompt)
-
-                # 2. Prépare le contexte pour l'IA
-                # On lui donne un résumé des données (pas tout pour pas saturer)
-                contexte_donnees = f"""
-                Tu es un expert RH. Voici les données de l'entreprise :
-                - Nombre employés : {len(rh)}
-                - Masse salariale mensuelle : {rh['Salaire (€)'].sum()} €
-                - Liste des employés et postes : {rh[['Nom', 'Poste', 'Service', 'Salaire (€)']].to_string()}
-                - Recrutements en cours : {rec[['Poste', 'Date Ouverture Poste']].to_string() if not rec.empty else 'Aucun'}
-                
-                Réponds à la question de l'utilisateur en te basant sur ces données. Sois professionnel et concis.
-                Question : {prompt}
-                """
-
-                # 3. Interroge Gemini
-                try:
-                    model = genai.GenerativeModel('gemini-pro')
-                    response = model.generate_content(contexte_donnees)
-                    bot_reply = response.text
-                except Exception as e:
-                    bot_reply = f"Erreur IA : {e}"
-
-                # 4. Affiche réponse
-                with st.chat_message("assistant"):
-                    st.markdown(bot_reply)
-                st.session_state.messages.append({"role": "assistant", "content": bot_reply})
-
-    # [LES AUTRES ONGLETS RESTENT IDENTIQUES AU CODE V41]
-    # Je remets le code standard pour que ça marche direct
-    
     with tab_metier:
         st.header("Cartographie Métiers")
         c1, c2 = st.columns([1, 1])
@@ -277,6 +224,7 @@ if rh is not None:
                 fig_sun = px.sunburst(rh_f, path=['CSP', 'Poste'], values='Salaire (€)', title="Masse Salariale", color='CSP', color_discrete_sequence=px.colors.qualitative.Pastel)
                 st.plotly_chart(clean_chart(fig_sun), use_container_width=True)
         with c2:
+            st.subheader("Annuaire")
             if 'CSP' in rh_f.columns and 'Poste' in rh_f.columns and 'Nom' in rh_f.columns:
                 df_d = rh_f.groupby(['CSP', 'Poste'])['Nom'].apply(lambda x: ', '.join(x)).reset_index()
                 st.dataframe(df_d, hide_index=True, use_container_width=True)
@@ -295,6 +243,7 @@ if rh is not None:
                     pdf_data = create_pdf(emp, hist)
                     st.download_button(label="📥 TÉLÉCHARGER PDF", data=pdf_data, file_name=f"Fiche_{emp['Nom']}.pdf", mime="application/pdf", use_container_width=True)
                 except Exception as e: st.error(f"Erreur PDF: {e}")
+
             col_id1, col_id2, col_id3, col_id4 = st.columns(4)
             col_id1.info(f"**Poste :** {emp['Poste']}")
             col_id2.info(f"**Service :** {emp['Service']}")
@@ -312,9 +261,12 @@ if rh is not None:
                 k3.metric("Futur", f"{prime_fut:,.0f} €", delta="Prévu")
                 st.plotly_chart(clean_chart(px.bar(x=['Actuel', 'Projeté'], y=[sal+prime_act, sal+prime_act+prime_fut], title="Trajectoire", text_auto=True)), use_container_width=True)
             with c2:
+                st.subheader("Statut")
                 if str(emp.get('Au SMIC', 'No')).lower() == 'oui': st.markdown('<div class="smic-alert">⚠️ Au SMIC</div>', unsafe_allow_html=True)
                 else: st.success("✅ Conforme")
+            st.subheader("🎓 Formations")
             if not hist.empty: st.dataframe(hist[['Type Formation', 'Coût Formation (€)']], hide_index=True, use_container_width=True)
+            else: st.info("Aucune.")
 
     with tab_rem:
         st.header("Rémunération")
@@ -339,6 +291,7 @@ if rh is not None:
                 if 'Type Formation' in form_f.columns: st.plotly_chart(clean_chart(px.pie(form_f, names='Type Formation', values='Coût Formation (€)', hole=0.4)), use_container_width=True)
             with c2:
                 if 'CSP' in form_f.columns: st.plotly_chart(clean_chart(px.bar(form_f.groupby('CSP')['Coût Formation (€)'].sum().reset_index(), x='CSP', y='Coût Formation (€)')), use_container_width=True)
+        else: st.info("Pas de données.")
 
     with tab_rec:
         st.header("Recrutement")
@@ -346,12 +299,15 @@ if rh is not None:
         if 'Date Clôture Poste' in rec.columns and 'Date Ouverture Poste' in rec.columns:
              rec['Temps'] = (rec['Date Clôture Poste'] - rec['Date Ouverture Poste']).dt.days
              avg_time = rec['Temps'].mean()
+        
         total_cout_rec = rec['Coût Recrutement (€)'].sum() if 'Coût Recrutement (€)' in rec.columns else 0
         nb_candidats = rec['Nombre Candidats'].sum() if 'Nombre Candidats' in rec.columns else 0
+
         c1, c2, c3 = st.columns(3)
         c1.metric("Temps Moyen", f"{avg_time:.0f} jours")
         c2.metric("Coût Total", f"{total_cout_rec:,.0f} €")
         c3.metric("Candidats", f"{nb_candidats:,.0f}")
+
         st.markdown("---")
         if 'Canal Sourcing' in rec.columns:
             df_src = rec.groupby('Canal Sourcing').size().reset_index(name='Nombre')
