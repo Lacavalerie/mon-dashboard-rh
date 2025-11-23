@@ -8,21 +8,19 @@ import gspread
 from google.oauth2.service_account import Credentials
 
 # Configuration
-st.set_page_config(page_title="Dashboard V42: Fix Chiffres", layout="wide")
+st.set_page_config(page_title="Dashboard RH: Stable", layout="wide")
 
-# --- AUTH GOOGLE ---
+# --- AUTH GOOGLE SHEETS ---
 def connect_google_sheet():
     try:
         secrets = st.secrets["gcp_service_account"]
         scope = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
         creds = Credentials.from_service_account_info(secrets, scopes=scope)
         client = gspread.authorize(creds)
-        # REMPLACE PAR L'ID DE TON SHEET (celui que tu avais mis avant)
-        # OU LAISSE LE NOM SI CA MARCHE
         sheet = client.open("Dashboard_Data") 
         return sheet
     except Exception as e:
-        st.error(f"⚠️ Erreur connexion Google : {e}")
+        st.error(f"⚠️ Erreur connexion Google Sheets : {e}")
         st.stop()
 
 # --- LOGIN ---
@@ -35,7 +33,7 @@ def check_login():
     if user == "admin" and pwd == "rh123":
         st.session_state['logged_in'] = True
         st.session_state['username'] = user
-    else: st.error("Erreur login")
+    else: st.error("Identifiant ou mot de passe incorrect")
 
 def logout():
     st.session_state['logged_in'] = False
@@ -120,14 +118,9 @@ def calculer_donnees_rh(df):
         df['Écart Svc'] = df['Salaire (€)'] - df['Moyenne Svc']
     return df
 
-# --- NETTOYEUR DE MONNAIE ---
 def clean_currency(val):
-    """Transforme '2 000,00 €' en 2000.00"""
     if isinstance(val, str):
-        # On enlève le symbole euro, les espaces insécables (\xa0) et les espaces normaux
-        val = val.replace('€', '').replace('\xa0', '').replace(' ', '')
-        # On remplace la virgule par un point
-        val = val.replace(',', '.')
+        val = val.replace('€', '').replace('\xa0', '').replace(' ', '').replace(',', '.')
     return val
 
 @st.cache_data(ttl=60)
@@ -144,34 +137,24 @@ def charger_donnees():
         for df in [df_social, df_sal, df_form, df_rec, df_fin]:
             df.columns = [c.strip() for c in df.columns]
 
-        # CORRECTIONS NOMS COLONNES
         if 'Primes(€)' in df_sal.columns: df_sal.rename(columns={'Primes(€)': 'Primes (€)'}, inplace=True)
-        
-        # ICI : Correction pour ta colonne Formation (qui n'avait pas le (€))
-        if 'Coût Formation' in df_form.columns: df_form.rename(columns={'Coût Formation': 'Coût Formation (€)'}, inplace=True)
         if 'Cout Formation (€)' in df_form.columns: df_form.rename(columns={'Cout Formation (€)': 'Coût Formation (€)'}, inplace=True)
-        
+        if 'Coût Formation' in df_form.columns: df_form.rename(columns={'Coût Formation': 'Coût Formation (€)'}, inplace=True)
         if 'Type de Formation' in df_form.columns: df_form.rename(columns={'Type de Formation': 'Type Formation'}, inplace=True)
 
-        # FUSION
         if 'Nom' in df_social.columns and 'Nom' in df_sal.columns:
             df_global = pd.merge(df_social, df_sal, on='Nom', how='left')
         else: return None, None, None, None
 
-        # --- NETTOYAGE DES CHIFFRES AVANT CALCUL ---
-        cols_argent = ['Salaire (€)', 'Primes (€)', 'Primes Futures (€)', 'Coût Formation (€)', 'Coût Recrutement (€)']
-        
-        # On applique le nettoyeur sur Formation
+        # Nettoyage Chiffres
         if 'Coût Formation (€)' in df_form.columns:
             df_form['Coût Formation (€)'] = df_form['Coût Formation (€)'].apply(clean_currency)
             df_form['Coût Formation (€)'] = pd.to_numeric(df_form['Coût Formation (€)'], errors='coerce').fillna(0)
-
-        # On applique le nettoyeur sur Recrutement
+        
         if 'Coût Recrutement (€)' in df_rec.columns:
             df_rec['Coût Recrutement (€)'] = df_rec['Coût Recrutement (€)'].apply(clean_currency)
             df_rec['Coût Recrutement (€)'] = pd.to_numeric(df_rec['Coût Recrutement (€)'], errors='coerce').fillna(0)
 
-        # --- SUITE FUSION ---
         if 'Nom' in df_form.columns and 'Coût Formation (€)' in df_form.columns:
             df_formation_detail = pd.merge(df_form, df_social[['Nom', 'Service', 'CSP']], on='Nom', how='left')
             form_group = df_form.groupby('Nom')['Coût Formation (€)'].sum().reset_index()
@@ -184,10 +167,10 @@ def charger_donnees():
         for col in ['Date Ouverture Poste', 'Date Clôture Poste']:
             if col in df_rec.columns: df_rec[col] = pd.to_datetime(df_rec[col], dayfirst=True, errors='coerce')
         
-        # Nettoyage du global (Salaires)
-        for c in ['Primes (€)', 'Salaire (€)', 'Primes Futures (€)', 'Évaluation (1-5)']:
+        cols_num = ['Primes (€)', 'Salaire (€)', 'Primes Futures (€)', 'Évaluation (1-5)']
+        for c in cols_num:
             if c in df_global.columns: 
-                df_global[c] = df_global[c].apply(clean_currency) # On nettoie aussi ici
+                df_global[c] = df_global[c].apply(clean_currency)
                 df_global[c] = pd.to_numeric(df_global[c], errors='coerce').fillna(0)
 
         if 'Au SMIC' not in df_global.columns: df_global['Au SMIC'] = 'Non'
@@ -299,15 +282,12 @@ if rh is not None:
         if 'Date Clôture Poste' in rec.columns and 'Date Ouverture Poste' in rec.columns:
              rec['Temps'] = (rec['Date Clôture Poste'] - rec['Date Ouverture Poste']).dt.days
              avg_time = rec['Temps'].mean()
-        
         total_cout_rec = rec['Coût Recrutement (€)'].sum() if 'Coût Recrutement (€)' in rec.columns else 0
         nb_candidats = rec['Nombre Candidats'].sum() if 'Nombre Candidats' in rec.columns else 0
-
         c1, c2, c3 = st.columns(3)
         c1.metric("Temps Moyen", f"{avg_time:.0f} jours")
         c2.metric("Coût Total", f"{total_cout_rec:,.0f} €")
         c3.metric("Candidats", f"{nb_candidats:,.0f}")
-
         st.markdown("---")
         if 'Canal Sourcing' in rec.columns:
             df_src = rec.groupby('Canal Sourcing').size().reset_index(name='Nombre')
