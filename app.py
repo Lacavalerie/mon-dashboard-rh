@@ -10,7 +10,7 @@ import time
 from streamlit_option_menu import option_menu
 
 # Configuration
-st.set_page_config(page_title="RH Cockpit V72", layout="wide", initial_sidebar_state="expanded")
+st.set_page_config(page_title="RH Cockpit V72.1", layout="wide", initial_sidebar_state="expanded")
 
 # --- DESIGN ---
 st.markdown("""
@@ -50,7 +50,6 @@ st.markdown("""
 
 # --- FONCTIONS UTILES ---
 def calculer_turnover(df):
-    """Calcule le taux de turnover (Départs / Effectif total) * 100"""
     if 'Statut' in df.columns:
         departures = (df['Statut'] == 'Sorti').sum()
         active_staff = (df['Statut'] == 'Actif').sum()
@@ -74,17 +73,23 @@ def save_data_to_google(df, worksheet_name):
         sheet = connect_google_sheet()
         ws = sheet.worksheet(worksheet_name)
         df_to_save = df.copy()
-        for col in df_to_save.columns:
-            if pd.api.types.is_datetime64_any_dtype(df_to_save[col]): df_to_save[col] = df_to_save[col].dt.strftime('%d/%m/%Y')
         
+        # 1. Gestion des dates
+        for col in df_to_save.columns:
+            if pd.api.types.is_datetime64_any_dtype(df_to_save[col]):
+                df_to_save[col] = df_to_save[col].dt.strftime('%d/%m/%Y')
+        
+        # 2. Remplacer les NaN par ""
         df_to_save = df_to_save.fillna("")
+        
         ws.clear()
         ws.update([df_to_save.columns.values.tolist()] + df_to_save.values.tolist())
-        st.toast(f"✅ {worksheet_name} sauvegardé !", icon="💾")
+        st.toast(f"✅ {worksheet_name} sauvegardé avec succès !", icon="💾")
         time.sleep(1)
         st.cache_data.clear()
         st.rerun()
-    except Exception as e: st.error(f"Erreur sauvegarde : {e}")
+    except Exception as e:
+        st.error(f"Erreur sauvegarde : {e}")
 
 def clean_currency(val):
     if isinstance(val, str): val = val.replace('€', '').replace(' ', '').replace('\xa0', '').replace(',', '.')
@@ -153,12 +158,14 @@ def load_data(sheet_name):
     try:
         sheet = connect_google_sheet()
         data = {}
+        # Liste des onglets obligatoires
         for name in ['Données Sociales', 'Salaires', 'Formation', 'Recrutement', 'Finances', 'Temps & Projets']:
             try:
                 df = pd.DataFrame(sheet.worksheet(name).get_all_records())
                 df.columns = [c.strip() for c in df.columns]
                 data[name] = df
             except:
+                # Si un onglet manque, on crée un vide pour ne pas planter
                 data[name] = pd.DataFrame()
 
         if not data['Salaires'].empty and 'Primes(€)' in data['Salaires'].columns: 
@@ -245,7 +252,7 @@ if rh is not None:
                 st.plotly_chart(clean_chart(fig), use_container_width=True)
             st.markdown("</div>", unsafe_allow_html=True)
 
-    # 2. SALARIÉS (Identique)
+    # 2. SALARIÉS
     elif selected == "Salariés":
         st.title("🗂️ Gestion des Talents")
         col_list, col_detail = st.columns([1, 3])
@@ -266,6 +273,8 @@ if rh is not None:
                     st.markdown("<div class='card'><h3>💰 Rémunération</h3>", unsafe_allow_html=True)
                     st.metric("Salaire Fixe", f"{emp.get('Salaire (€)', 0):,.0f} €")
                     st.metric("Primes", f"{emp.get('Primes (€)', 0):,.0f} €")
+                    st.metric("Total Brut", f"{(emp.get('Salaire (€)', 0)+emp.get('Primes (€)', 0)):,.0f} €")
+                    if str(emp.get('Au SMIC', 'No')).lower() == 'oui': st.markdown('<div class="alert-box">⚠️ Attention : Salaire au niveau du SMIC</div>', unsafe_allow_html=True)
                     st.markdown("</div>", unsafe_allow_html=True)
                 with c2:
                     st.markdown("<div class='card'><h3>🎓 Parcours Formation</h3>", unsafe_allow_html=True)
@@ -327,9 +336,10 @@ if rh is not None:
         else:
             st.warning("Veuillez remplir la feuille 'Temps & Projets' dans votre Google Sheet.")
 
-    # 6. SIMULATION (AMÉLIORÉE AVEC GRAPH)
+
+    # 6. SIMULATION
     elif selected == "Simulation":
-        st.title("🔮 Simulation")
+        st.title("🔮 Prospective Salariale")
         st.markdown("<div class='card'><h3>Paramètres</h3>", unsafe_allow_html=True)
         augm = st.slider("Hypothèse d'augmentation (%)", 0.0, 10.0, 2.0, 0.1)
         st.markdown("</div>", unsafe_allow_html=True)
@@ -349,7 +359,7 @@ if rh is not None:
         st.plotly_chart(clean_chart(px.bar(df_sim, x='État', y='Budget', color='État', text_auto='.2s')), use_container_width=True)
         st.markdown("</div>", unsafe_allow_html=True)
 
-    # 7. GESTION BDD
+    # 7. GESTION BDD (CORRIGÉ AVEC SYNTAXE DÉPLIÉE)
     elif selected == "Gestion BDD":
         st.title("🛠️ Centre de Gestion")
         st.info(f"Client : {st.session_state.get('company_name', 'Demo')}")
@@ -359,29 +369,34 @@ if rh is not None:
         with tab_rh:
             st.markdown("<div class='card'>", unsafe_allow_html=True)
             edited_rh = st.data_editor(raw_data['Données Sociales'], num_rows="dynamic", use_container_width=True)
-            if st.button("💾 Sauvegarder Employés"): save_data_to_google(edited_rh, 'Données Sociales')
+            if st.button("💾 Sauvegarder Employés"):
+                save_data_to_google(edited_rh, 'Données Sociales')
             st.markdown("</div>", unsafe_allow_html=True)
-        
+            
         with tab_sal:
             st.markdown("<div class='card'>", unsafe_allow_html=True)
             edited_sal = st.data_editor(raw_data['Salaires'], num_rows="dynamic", use_container_width=True)
-            if st.button("💾 Sauvegarder Salaires"): save_data_to_google(edited_sal, 'Salaires')
+            if st.button("💾 Sauvegarder Salaires"):
+                save_data_to_google(edited_sal, 'Salaires')
             st.markdown("</div>", unsafe_allow_html=True)
-        
+            
         with tab_form:
             st.markdown("<div class='card'>", unsafe_allow_html=True)
             edited_form = st.data_editor(raw_data['Formation'], num_rows="dynamic", use_container_width=True)
-            if st.button("💾 Sauvegarder Formations"): save_data_to_google(edited_form, 'Formation')
+            if st.button("💾 Sauvegarder Formations"):
+                save_data_to_google(edited_form, 'Formation')
             st.markdown("</div>", unsafe_allow_html=True)
-
+            
         with tab_rec:
             st.markdown("<div class='card'>", unsafe_allow_html=True)
             edited_rec = st.data_editor(raw_data['Recrutement'], num_rows="dynamic", use_container_width=True)
-            if st.button("💾 Sauvegarder Recrutements"): save_data_to_google(edited_rec, 'Recrutement')
+            if st.button("💾 Sauvegarder Recrutements"):
+                save_data_to_google(edited_rec, 'Recrutement')
             st.markdown("</div>", unsafe_allow_html=True)
-
+            
         with tab_temps:
             st.markdown("<div class='card'>", unsafe_allow_html=True)
             edited_temps = st.data_editor(raw_data['Temps & Projets'], num_rows="dynamic", use_container_width=True)
-            if st.button("💾 Sauvegarder Temps"): save_data_to_google(edited_temps, 'Temps & Projets')
+            if st.button("💾 Sauvegarder Temps"):
+                save_data_to_google(edited_temps, 'Temps & Projets')
             st.markdown("</div>", unsafe_allow_html=True)
