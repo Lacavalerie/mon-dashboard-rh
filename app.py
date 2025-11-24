@@ -10,10 +10,7 @@ import time
 from streamlit_option_menu import option_menu
 
 # Configuration
-st.set_page_config(page_title="RH Cockpit V68", layout="wide", initial_sidebar_state="expanded")
-
-# --- PALETTE DE COULEURS CONTRASTÉES (ACCESSIBILITÉ) ---
-COLORS = ['#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899', '#06b6d4']
+st.set_page_config(page_title="RH Cockpit V72", layout="wide", initial_sidebar_state="expanded")
 
 # --- DESIGN ---
 st.markdown("""
@@ -42,25 +39,17 @@ st.markdown("""
     .kpi-lbl { font-size: 14px; color: #9ca3af; text-transform: uppercase; letter-spacing: 1px; font-weight: 600;}
     .alert-box { background-color: rgba(127, 29, 29, 0.5); color: #fca5a5 !important; padding: 15px; border-radius: 8px; border: 1px solid #ef4444; }
     [data-testid="stDataFrame"] { background-color: transparent !important; }
-    
-    /* Bouton Déconnexion Rouge */
-    div.stButton > button {
-        background-color: #ef4444 !important;
-        color: white !important;
-        border: none;
-        font-weight: bold;
-    }
     </style>
 """, unsafe_allow_html=True)
 
-# --- FONCTIONS ---
+# --- FONCTIONS TECHNIQUES ---
 def connect_google_sheet():
     try:
         secrets = st.secrets["gcp_service_account"]
         scope = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
         creds = Credentials.from_service_account_info(secrets, scopes=scope)
         client = gspread.authorize(creds)
-        return client.open("Dashboard_Data") 
+        return client.open(st.session_state.get('current_sheet', "Dashboard_Data")) 
     except Exception as e:
         st.error(f"⚠️ Erreur Google : {e}")
         st.stop()
@@ -70,45 +59,51 @@ def save_data_to_google(df, worksheet_name):
         sheet = connect_google_sheet()
         ws = sheet.worksheet(worksheet_name)
         df_to_save = df.copy()
+
+        # --- FIX JSON SERIALIZATION (NOUVEAU) ---
+        # 1. Convertir les dates en format string (Google Sheets les préfère)
         for col in df_to_save.columns:
             if pd.api.types.is_datetime64_any_dtype(df_to_save[col]):
                 df_to_save[col] = df_to_save[col].dt.strftime('%d/%m/%Y')
+        
+        # 2. Remplacer tous les NaN (Python) par des chaînes vides (JSON/GSheets)
+        df_to_save = df_to_save.astype(str).replace({'nan': '', '<NA>': '', 'None': ''})
+        # ----------------------------------------
+        
         ws.clear()
         ws.update([df_to_save.columns.values.tolist()] + df_to_save.values.tolist())
         st.toast(f"✅ {worksheet_name} sauvegardé !", icon="💾")
         time.sleep(1)
         st.cache_data.clear()
         st.rerun()
-    except Exception as e: st.error(f"Erreur : {e}")
+    except Exception as e: st.error(f"Erreur sauvegarde : {e}")
 
-# GESTION LOGIN / LOGOUT
+# Login
 if 'logged_in' not in st.session_state: st.session_state['logged_in'] = False
+if 'current_sheet' not in st.session_state: st.session_state['current_sheet'] = ""
+if 'company_name' not in st.session_state: st.session_state['company_name'] = ""
+
 def check_login():
-    if st.session_state['u'] == "admin" and st.session_state['p'] == "rh123": st.session_state['logged_in'] = True
+    if st.session_state['u'] == "admin" and st.session_state['p'] == "rh123": 
+        st.session_state['logged_in'] = True
+        st.session_state['current_sheet'] = "Dashboard_Data" 
+        st.session_state['company_name'] = "H&C CONSEIL"
     else: st.error("Erreur")
-def logout(): st.session_state['logged_in'] = False; st.rerun()
+def logout(): st.session_state['logged_in'] = False; st.cache_data.clear(); st.rerun()
 
 if not st.session_state['logged_in']:
-    # AJOUT TITRE PAGE DE CONNEXION
-    st.markdown("""
-        <div style='text-align: center; margin-bottom: 50px;'>
-            <img src="https://cdn-icons-png.flaticon.com/512/3135/3135715.png" width="100">
-            <h1 style='color: white; margin-top: 20px;'>RH COCKPIT PRO</h1>
-            <p style='color: #94a3b8; font-size: 18px;'>Portail de Gestion Stratégique</p>
-        </div>
-    """, unsafe_allow_html=True)
-    
+    st.markdown("""<div style='text-align: center; margin-bottom: 50px;'> <img src='https://cdn-icons-png.flaticon.com/512/3135/3135715.png' width='100'> <h1 style='color: white; margin-top: 20px;'>H&C PORTAIL RH</h1> <p style='color: #94a3b8; font-size: 18px;'>Portail de Gestion Stratégique</p></div>""", unsafe_allow_html=True)
     c1,c2,c3 = st.columns([1,1,1])
     with c2:
         st.markdown("<div class='card'>", unsafe_allow_html=True)
         st.subheader("🔒 Authentification")
         st.text_input("Identifiant", key="u")
         st.text_input("Mot de passe", type="password", key="p")
-        if st.button("Entrer", use_container_width=True): check_login()
+        st.button("Entrer", on_click=check_login, use_container_width=True)
         st.markdown("</div>", unsafe_allow_html=True)
     st.stop()
 
-# --- PDF & UTILITAIRES ---
+# --- FONCTIONS MÉTIER ---
 def create_pdf(emp, form_hist):
     pdf = FPDF()
     pdf.add_page()
@@ -142,13 +137,7 @@ def calculer_donnees(df):
     return df
 
 def clean_chart(fig):
-    fig.update_layout(
-        paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)", font=dict(color="#e5e7eb"),
-        margin=dict(l=10, r=10, t=40, b=10),
-        xaxis=dict(showgrid=False, color="#e5e7eb"),
-        yaxis=dict(showgrid=True, gridcolor="#374151", color="#e5e7eb"),
-        legend=dict(font=dict(color="#e5e7eb"))
-    )
+    fig.update_layout(paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)", font=dict(color="white"), margin=dict(l=10, r=10, t=40, b=10), xaxis=dict(showgrid=False, color="white"), yaxis=dict(showgrid=True, gridcolor="#374151", color="white"), legend=dict(font=dict(color="white")))
     return fig
 
 # --- CHARGEMENT ---
@@ -157,7 +146,7 @@ def load_data():
     try:
         sheet = connect_google_sheet()
         data = {}
-        for name in ['Données Sociales', 'Salaires', 'Formation', 'Recrutement', 'Finances']:
+        for name in ['Données Sociales', 'Salaires', 'Formation', 'Recrutement', 'Finances', 'Temps & Projets']:
             df = pd.DataFrame(sheet.worksheet(name).get_all_records())
             df.columns = [c.strip() for c in df.columns]
             data[name] = df
@@ -180,30 +169,26 @@ def load_data():
             if col in df_global.columns: df_global[col] = df_global[col].apply(clean_currency)
         
         df_global = calculer_donnees(df_global)
-        return df_global, data['Recrutement'], form_detail_enrichi, data
+        return df_global, data['Recrutement'], form_detail_enrichi, data['Temps & Projets'], data
     except Exception as e:
         st.error(f"Erreur Load : {e}")
-        return None, None, None, None
+        return None, None, None, None, None
 
-rh, rec, form_detail, raw_data = load_data()
+rh, rec, form_detail, temps_projets, raw_data = load_data()
 
 # --- INTERFACE ---
 if rh is not None:
     
     with st.sidebar:
         st.image("https://cdn-icons-png.flaticon.com/512/1077/1077114.png", width=60)
+        st.markdown(f"### {st.session_state.get('company_name', 'H&C CONSEIL')}")
         
         selected = option_menu(
-            menu_title="RH COCKPIT",
-            options=["Dashboard", "Salariés", "Formation", "Recrutement", "Simulation", "Gestion BDD"],
-            icons=["speedometer2", "people", "mortarboard", "bullseye", "calculator", "database"],
+            menu_title="MENU",
+            options=["Dashboard", "Salariés", "Formation", "Recrutement", "Temps & Projets", "Simulation", "Gestion BDD"],
+            icons=["speedometer2", "people", "mortarboard", "bullseye", "clock", "calculator", "database"],
             menu_icon="cast", default_index=0,
-            styles={
-                "container": {"padding": "0!important", "background-color": "transparent"},
-                "icon": {"color": "#38bdf8", "font-size": "16px"}, 
-                "nav-link": {"font-size": "14px", "text-align": "left", "margin":"5px", "--hover-color": "#1f2937", "color": "#e5e7eb"},
-                "nav-link-selected": {"background-color": "#3b82f6", "color": "white"},
-            }
+            styles={"container": {"padding": "0!important", "background-color": "transparent"}, "icon": {"color": "#38bdf8", "font-size": "16px"}, "nav-link": {"font-size": "14px", "text-align": "left", "margin":"5px", "--hover-color": "#1f2937", "color": "#e5e7eb"}, "nav-link-selected": {"background-color": "#3b82f6", "color": "white"},}
         )
         st.markdown("---")
         services = ['Tous'] + sorted(rh['Service'].unique().tolist()) if 'Service' in rh.columns else ['Tous']
@@ -211,7 +196,6 @@ if rh is not None:
         rh_f = rh[rh['Service'] == selected_service] if selected_service != 'Tous' else rh
         form_f = form_detail[form_detail['Service'] == selected_service] if selected_service != 'Tous' else form_detail
         
-        # BOUTON DÉCONNEXION (Ajouté ici)
         st.markdown("---")
         if st.button("🚪 Déconnexion", use_container_width=True): logout()
 
@@ -221,13 +205,13 @@ if rh is not None:
         ms = rh_f['Salaire (€)'].sum() * 12 * 1.45
         nb = len(rh_f)
         age = rh_f['Âge'].mean() if 'Âge' in rh_f.columns else 0
-        cout_form = rh_f['Coût Formation (€)'].sum()
+        taux_turnover = calculer_turnover(rh) 
         
         c1, c2, c3, c4 = st.columns(4)
         c1.markdown(f"<div class='card'><div class='kpi-val'>{nb}</div><div class='kpi-lbl'>Collaborateurs</div></div>", unsafe_allow_html=True)
-        c2.markdown(f"<div class='card'><div class='kpi-val'>{ms/1000:.0f} k€</div><div class='kpi-lbl'>Masse Salariale</div></div>", unsafe_allow_html=True)
-        c3.markdown(f"<div class='card'><div class='kpi-val'>{age:.0f} ans</div><div class='kpi-lbl'>Âge Moyen</div></div>", unsafe_allow_html=True)
-        c4.markdown(f"<div class='card'><div class='kpi-val'>{cout_form:,.0f} €</div><div class='kpi-lbl'>Budget Formation</div></div>", unsafe_allow_html=True)
+        c2.markdown(f"<div class='card'><div class='kpi-val'>{taux_turnover:.1f}%</div><div class='kpi-lbl'>Taux de Turnover</div></div>", unsafe_allow_html=True) 
+        c3.markdown(f"<div class='card'><div class='kpi-val'>{ms/1000:.0f} k€</div><div class='kpi-lbl'>Masse Salariale</div></div>", unsafe_allow_html=True)
+        c4.markdown(f"<div class='card'><div class='kpi-val'>{age:.0f} ans</div><div class='kpi-lbl'>Âge Moyen</div></div>", unsafe_allow_html=True)
         
         g1, g2 = st.columns(2)
         with g1:
@@ -237,12 +221,11 @@ if rh is not None:
             st.markdown("</div>", unsafe_allow_html=True)
         with g2:
             st.markdown("<div class='card'><h3>Pyramide des Âges</h3>", unsafe_allow_html=True)
-            if 'Âge' in rh_f.columns:
+            if 'Âge' in rh_f.columns and 'Sexe' in rh_f.columns:
                 rh_f['Tranche'] = pd.cut(rh_f['Âge'], bins=[20,30,40,50,60,70], labels=["20-30","30-40","40-50","50-60","60+"]).astype(str)
                 pyr = rh_f.groupby(['Tranche', 'Sexe']).size().reset_index(name='Nb')
                 pyr['Nb'] = pyr.apply(lambda x: -x['Nb'] if x['Sexe']=='Homme' else x['Nb'], axis=1)
-                fig = px.bar(pyr, x='Nb', y='Tranche', color='Sexe', orientation='h', 
-                             color_discrete_map={'Homme': '#3b82f6', 'Femme': '#ec4899'})
+                fig = px.bar(pyr, x='Nb', y='Tranche', color='Sexe', orientation='h', color_discrete_map={'Homme': '#3b82f6', 'Femme': '#ec4899'})
                 fig.update_layout(xaxis=dict(tickvals=[-5, 0, 5], ticktext=['5', '0', '5']))
                 st.plotly_chart(clean_chart(fig), use_container_width=True)
             st.markdown("</div>", unsafe_allow_html=True)
@@ -303,7 +286,25 @@ if rh is not None:
         st.dataframe(rec, use_container_width=True)
         st.markdown("</div>", unsafe_allow_html=True)
 
-    # 5. SIMULATION
+    # 5. TEMPS & PROJETS
+    elif selected == "Temps & Projets":
+        st.title("⏳ Suivi des Temps & Projets")
+        st.info("Cette page est connectée à la feuille 'Temps & Projets'.")
+        
+        if temps_projets is not None and not temps_projets.empty:
+            st.subheader("Distribution des Heures")
+            if 'Heures Travaillées' in temps_projets.columns and 'Projet' in temps_projets.columns:
+                temps_projets['Heures Travaillées'] = pd.to_numeric(temps_projets['Heures Travaillées'], errors='coerce').fillna(0)
+                df_proj_sum = temps_projets.groupby('Projet')['Heures Travaillées'].sum().reset_index()
+                st.plotly_chart(clean_chart(px.bar(df_proj_sum, x='Projet', y='Heures Travaillées', title="Total Heures par Projet")), use_container_width=True)
+            
+            st.subheader("Données Brutes (Feuille Temps & Projets)")
+            st.dataframe(temps_projets, use_container_width=True)
+        else:
+            st.warning("Veuillez remplir la feuille 'Temps & Projets' dans votre Google Sheet.")
+
+
+    # 6. SIMULATION
     elif selected == "Simulation":
         st.title("🔮 Prospective Salariale")
         st.markdown("<div class='card'><h3>Paramètres</h3>", unsafe_allow_html=True)
@@ -314,7 +315,7 @@ if rh is not None:
         st.metric("Impact Financier", f"+ {impact:,.0f} €", delta="Coût Annuel", delta_color="inverse")
         st.plotly_chart(clean_chart(go.Figure(go.Waterfall(measure=["relative", "relative", "total"], x=["Actuel", "Impact", "Futur"], y=[ms_actuelle, impact, ms_actuelle+impact]))), use_container_width=True)
 
-    # 6. GESTION BDD
+    # 7. GESTION BDD
     elif selected == "Gestion BDD":
         st.title("🛠️ Centre de Gestion des Données")
         st.info(f"Vous modifiez les données du client : {st.session_state.get('company_name', 'Demo')}")
