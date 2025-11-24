@@ -10,33 +10,18 @@ import time
 from streamlit_option_menu import option_menu
 
 # Configuration
-st.set_page_config(page_title="RH Cockpit V72", layout="wide", initial_sidebar_state="expanded")
+st.set_page_config(page_title="RH Cockpit V69", layout="wide", initial_sidebar_state="expanded")
 
-# --- DESIGN ---
+# --- DESIGN (Identique V67) ---
 st.markdown("""
     <style>
     .stApp { background-color: #0e1117; }
     [data-testid="stSidebar"] { background-color: #161b22; border-right: 1px solid #30363d; }
     h1, h2, h3, p, div, label, span, li { color: #FFFFFF !important; }
-    
-    .card {
-        background-color: #1f2937;
-        padding: 25px;
-        border-radius: 12px;
-        border: 1px solid #374151; 
-        box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.3);
-        margin-bottom: 25px;
-    }
-    .card h3 {
-        color: #38bdf8 !important;
-        font-size: 20px;
-        font-weight: 600;
-        margin-bottom: 20px;
-        border-bottom: 2px solid #374151;
-        padding-bottom: 12px;
-    }
-    .kpi-val { font-size: 32px; font-weight: 800; color: #f9fafb; }
-    .kpi-lbl { font-size: 14px; color: #9ca3af; text-transform: uppercase; letter-spacing: 1px; font-weight: 600;}
+    .card { background-color: #1f2937; padding: 20px; border-radius: 12px; border: 1px solid #374151; box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.3); margin-bottom: 25px; }
+    .card h3 { color: #38bdf8 !important; font-size: 20px; font-weight: 600; margin-bottom: 20px; border-bottom: 2px solid #374151; padding-bottom: 12px; }
+    .kpi-val { font-size: 28px; font-weight: bold; color: #f9fafb; }
+    .kpi-lbl { font-size: 13px; color: #9ca3af; text-transform: uppercase; letter-spacing: 1px; font-weight: 600;}
     .alert-box { background-color: rgba(127, 29, 29, 0.5); color: #fca5a5 !important; padding: 15px; border-radius: 8px; border: 1px solid #ef4444; }
     [data-testid="stDataFrame"] { background-color: transparent !important; }
     
@@ -54,8 +39,14 @@ def calculer_turnover(df):
     if 'Statut' in df.columns:
         departures = (df['Statut'] == 'Sorti').sum()
         active_staff = (df['Statut'] == 'Actif').sum()
-        total = departures + active_staff
-        return (departures / total) * 100 if total > 0 else 0.0
+        
+        # Effectif Moyen (Simplifié : (Actif + (Actif + Départs)) / 2)
+        # On utilise Effectif Actif + Départs / 2 pour une base simple de l'effectif moyen
+        current_headcount = departures + active_staff
+        
+        if current_headcount > 0:
+            taux = (departures / (current_headcount + active_staff) / 2) * 100 # Approx. Effectif Moyen
+            return taux
     return 0.0
 
 def connect_google_sheet():
@@ -65,9 +56,7 @@ def connect_google_sheet():
         creds = Credentials.from_service_account_info(secrets, scopes=scope)
         client = gspread.authorize(creds)
         return client.open(st.session_state.get('current_sheet', "Dashboard_Data")) 
-    except Exception as e:
-        st.error(f"⚠️ Erreur Google : {e}")
-        st.stop()
+    except Exception as e: st.error(f"⚠️ Erreur Google : {e}"); st.stop()
 
 def save_data_to_google(df, worksheet_name):
     try:
@@ -76,10 +65,6 @@ def save_data_to_google(df, worksheet_name):
         df_to_save = df.copy()
         for col in df_to_save.columns:
             if pd.api.types.is_datetime64_any_dtype(df_to_save[col]): df_to_save[col] = df_to_save[col].dt.strftime('%d/%m/%Y')
-        
-        # Fix JSON NaN
-        df_to_save = df_to_save.fillna("")
-        
         ws.clear()
         ws.update([df_to_save.columns.values.tolist()] + df_to_save.values.tolist())
         st.toast(f"✅ {worksheet_name} sauvegardé !", icon="💾")
@@ -87,6 +72,8 @@ def save_data_to_google(df, worksheet_name):
         st.cache_data.clear()
         st.rerun()
     except Exception as e: st.error(f"Erreur sauvegarde : {e}")
+
+# ... (Autres fonctions PDF, clean_currency, clean_chart restent les mêmes) ...
 
 def clean_currency(val):
     if isinstance(val, str): val = val.replace('€', '').replace(' ', '').replace('\xa0', '').replace(',', '.')
@@ -149,28 +136,33 @@ if not st.session_state['logged_in']:
     st.stop()
 
 
-# --- CHARGEMENT ---
+# --- CHARGEMENT DES 6 TABLES ---
 @st.cache_data(ttl=60)
 def load_data(sheet_name):
     try:
         sheet = connect_google_sheet()
         data = {}
+        # Liste des onglets obligatoires
         for name in ['Données Sociales', 'Salaires', 'Formation', 'Recrutement', 'Finances', 'Temps & Projets']:
             try:
                 df = pd.DataFrame(sheet.worksheet(name).get_all_records())
                 df.columns = [c.strip() for c in df.columns]
                 data[name] = df
             except:
+                # Si un onglet manque, on crée un vide pour ne pas planter
                 data[name] = pd.DataFrame()
 
+        # Nettoyage
         if not data['Salaires'].empty and 'Primes(€)' in data['Salaires'].columns: 
             data['Salaires'].rename(columns={'Primes(€)': 'Primes (€)'}, inplace=True)
         
+        # Fusion
         if not data['Données Sociales'].empty and not data['Salaires'].empty:
             df_global = pd.merge(data['Données Sociales'], data['Salaires'], on='Nom', how='left')
         else:
             df_global = data['Données Sociales']
         
+        # Formation
         if not data['Formation'].empty:
             data['Formation']['Coût Formation (€)'] = data['Formation']['Coût Formation (€)'].apply(clean_currency)
             form_agg = data['Formation'].groupby('Nom')['Coût Formation (€)'].sum().reset_index()
@@ -181,9 +173,11 @@ def load_data(sheet_name):
             df_global['Coût Formation (€)'] = 0
             form_detail_enrichi = pd.DataFrame()
 
+        # Recrutement
         if not data['Recrutement'].empty and 'Coût Recrutement (€)' in data['Recrutement'].columns:
             data['Recrutement']['Coût Recrutement (€)'] = data['Recrutement']['Coût Recrutement (€)'].apply(clean_currency)
         
+        # Nettoyage Global
         for col in ['Salaire (€)', 'Primes (€)']:
             if col in df_global.columns: df_global[col] = df_global[col].apply(clean_currency)
         
@@ -269,6 +263,8 @@ if rh is not None:
                     st.markdown("<div class='card'><h3>💰 Rémunération</h3>", unsafe_allow_html=True)
                     st.metric("Salaire Fixe", f"{emp.get('Salaire (€)', 0):,.0f} €")
                     st.metric("Primes", f"{emp.get('Primes (€)', 0):,.0f} €")
+                    st.metric("Total Brut", f"{(emp.get('Salaire (€)', 0)+emp.get('Primes (€)', 0)):,.0f} €")
+                    if str(emp.get('Au SMIC', 'No')).lower() == 'oui': st.markdown('<div class="alert-box">⚠️ Attention : Salaire au niveau du SMIC</div>', unsafe_allow_html=True)
                     st.markdown("</div>", unsafe_allow_html=True)
                 with c2:
                     st.markdown("<div class='card'><h3>🎓 Parcours Formation</h3>", unsafe_allow_html=True)
@@ -276,15 +272,28 @@ if rh is not None:
                     else: st.info("Aucune formation.")
                     st.markdown("</div>", unsafe_allow_html=True)
 
-    # 3. FORMATION
+    # 3. FORMATION (Identique)
     elif selected == "Formation":
         st.title("🎓 Pilotage Formation")
-        # ... (Contenu Formation) ...
+        budget_total = form_f['Coût Formation (€)'].sum()
+        nb_actions = len(form_f)
+        c1, c2 = st.columns(2)
+        c1.markdown(f"<div class='card'><div class='kpi-val'>{budget_total:,.0f} €</div><div class='kpi-lbl'>Budget Consommé</div></div>", unsafe_allow_html=True)
+        c2.markdown(f"<div class='card'><div class='kpi-val'>{nb_actions}</div><div class='kpi-lbl'>Actions</div></div>", unsafe_allow_html=True)
+        st.markdown("<div class='card'><h3>Détail</h3>", unsafe_allow_html=True)
+        st.dataframe(form_f, use_container_width=True)
+        st.markdown("</div>", unsafe_allow_html=True)
 
-    # 4. RECRUTEMENT
+    # 4. RECRUTEMENT (Identique)
     elif selected == "Recrutement":
         st.title("🎯 Recrutement")
-        # ... (Contenu Recrutement) ...
+        total_rec = rec['Coût Recrutement (€)'].sum()
+        c1, c2 = st.columns(2)
+        c1.markdown(f"<div class='card'><div class='kpi-val'>{total_rec:,.0f} €</div><div class='kpi-lbl'>Investissement</div></div>", unsafe_allow_html=True)
+        c2.markdown(f"<div class='card'><div class='kpi-val'>{len(rec)}</div><div class='kpi-lbl'>Postes Ouverts</div></div>", unsafe_allow_html=True)
+        st.markdown("<div class='card'><h3>Pipeline</h3>", unsafe_allow_html=True)
+        st.dataframe(rec, use_container_width=True)
+        st.markdown("</div>", unsafe_allow_html=True)
 
     # 5. TEMPS & PROJETS (AVEC GRAPHIQUE)
     elif selected == "Temps & Projets":
@@ -319,8 +328,14 @@ if rh is not None:
 
     # 6. SIMULATION
     elif selected == "Simulation":
-        st.title("🔮 Simulation")
-        # ... (Contenu Simulation) ...
+        st.title("🔮 Prospective Salariale")
+        st.markdown("<div class='card'><h3>Paramètres</h3>", unsafe_allow_html=True)
+        augm = st.slider("Hypothèse d'augmentation (%)", 0.0, 10.0, 2.0, 0.1)
+        st.markdown("</div>", unsafe_allow_html=True)
+        ms_actuelle = rh_f['Salaire (€)'].sum() * 12 * 1.45
+        impact = ms_actuelle * (augm/100)
+        st.metric("Impact Financier", f"+ {impact:,.0f} €", delta="Coût Annuel", delta_color="inverse")
+        st.plotly_chart(clean_chart(go.Figure(go.Waterfall(measure=["relative", "relative", "total"], x=["Actuel", "Impact", "Futur"], y=[ms_actuelle, impact, ms_actuelle+impact]))), use_container_width=True)
 
     # 7. GESTION BDD (CORRIGÉ AVEC SYNTAXE DÉPLIÉE)
     elif selected == "Gestion BDD":
