@@ -10,7 +10,7 @@ import time
 from streamlit_option_menu import option_menu
 
 # Configuration
-st.set_page_config(page_title="RH Cockpit V72.1", layout="wide", initial_sidebar_state="expanded")
+st.set_page_config(page_title="RH Cockpit V73", layout="wide", initial_sidebar_state="expanded")
 
 # --- DESIGN ---
 st.markdown("""
@@ -74,12 +74,10 @@ def save_data_to_google(df, worksheet_name):
         ws = sheet.worksheet(worksheet_name)
         df_to_save = df.copy()
         
-        # 1. Gestion des dates
         for col in df_to_save.columns:
             if pd.api.types.is_datetime64_any_dtype(df_to_save[col]):
                 df_to_save[col] = df_to_save[col].dt.strftime('%d/%m/%Y')
         
-        # 2. Remplacer les NaN par ""
         df_to_save = df_to_save.fillna("")
         
         ws.clear()
@@ -165,27 +163,42 @@ def load_data(sheet_name):
                 df.columns = [c.strip() for c in df.columns]
                 data[name] = df
             except:
-                # Si un onglet manque, on crée un vide pour ne pas planter
                 data[name] = pd.DataFrame()
 
+        # CORRECTION NOM COLONNES (Anti-Erreur)
         if not data['Salaires'].empty and 'Primes(€)' in data['Salaires'].columns: 
             data['Salaires'].rename(columns={'Primes(€)': 'Primes (€)'}, inplace=True)
         
+        # Ici le fix pour la formation (Ton erreur KeyError)
+        if not data['Formation'].empty:
+            if 'Type de Formation' in data['Formation'].columns: data['Formation'].rename(columns={'Type de Formation': 'Type Formation'}, inplace=True)
+            if 'Coût Formation' in data['Formation'].columns: data['Formation'].rename(columns={'Coût Formation': 'Coût Formation (€)'}, inplace=True)
+            # Double sécurité si écrit différemment
+            if 'Cout Formation' in data['Formation'].columns: data['Formation'].rename(columns={'Cout Formation': 'Coût Formation (€)'}, inplace=True)
+        
+        # Fusions
         if not data['Données Sociales'].empty and not data['Salaires'].empty:
             df_global = pd.merge(data['Données Sociales'], data['Salaires'], on='Nom', how='left')
         else:
             df_global = data['Données Sociales']
         
-        if not data['Formation'].empty:
+        # Gestion Formation
+        if not data['Formation'].empty and 'Coût Formation (€)' in data['Formation'].columns:
             data['Formation']['Coût Formation (€)'] = data['Formation']['Coût Formation (€)'].apply(clean_currency)
             form_agg = data['Formation'].groupby('Nom')['Coût Formation (€)'].sum().reset_index()
             df_global = pd.merge(df_global, form_agg, on='Nom', how='left')
             df_global['Coût Formation (€)'] = df_global['Coût Formation (€)'].fillna(0)
-            form_detail_enrichi = pd.merge(data['Formation'], data['Données Sociales'][['Nom', 'Service', 'CSP']], on='Nom', how='left')
+            
+            # Création du détail enrichi pour les fiches
+            if not data['Données Sociales'].empty:
+                form_detail_enrichi = pd.merge(data['Formation'], data['Données Sociales'][['Nom', 'Service', 'CSP']], on='Nom', how='left')
+            else:
+                form_detail_enrichi = data['Formation']
         else:
             df_global['Coût Formation (€)'] = 0
             form_detail_enrichi = pd.DataFrame()
 
+        # Nettoyage final
         if not data['Recrutement'].empty and 'Coût Recrutement (€)' in data['Recrutement'].columns:
             data['Recrutement']['Coût Recrutement (€)'] = data['Recrutement']['Coût Recrutement (€)'].apply(clean_currency)
         
@@ -232,7 +245,7 @@ if rh is not None:
         
         c1, c2, c3, c4 = st.columns(4)
         c1.markdown(f"<div class='card'><div class='kpi-val'>{nb}</div><div class='kpi-lbl'>Collaborateurs</div></div>", unsafe_allow_html=True)
-        c2.markdown(f"<div class='card'><div class='kpi-val'>{taux_turnover:.1f}%</div><div class='kpi-lbl'>Turnover (Départs/Total)</div></div>", unsafe_allow_html=True) 
+        c2.markdown(f"<div class='card'><div class='kpi-val'>{taux_turnover:.1f}%</div><div class='kpi-lbl'>Turnover</div></div>", unsafe_allow_html=True) 
         c3.markdown(f"<div class='card'><div class='kpi-val'>{ms/1000:.0f} k€</div><div class='kpi-lbl'>Masse Salariale</div></div>", unsafe_allow_html=True)
         c4.markdown(f"<div class='card'><div class='kpi-val'>{age:.0f} ans</div><div class='kpi-lbl'>Âge Moyen</div></div>", unsafe_allow_html=True)
         
@@ -265,7 +278,13 @@ if rh is not None:
             if choix:
                 emp = rh[rh['Nom'] == choix].iloc[0]
                 st.markdown(f"""<div class='card' style='border-left: 5px solid #38bdf8;'><h2 style='margin:0; color:#f3f4f6 !important;'>{emp['Nom']}</h2><p style='color:#94a3b8 !important;'>{emp['Poste']} • {emp['Service']} • {emp.get('CSP', '')}</p></div>""", unsafe_allow_html=True)
-                hist = form_detail[form_detail['Nom'] == choix] if not form_detail.empty else pd.DataFrame()
+                
+                # Fix pour afficher l'historique de formation même si vide
+                if not form_detail.empty:
+                    hist = form_detail[form_detail['Nom'] == choix]
+                else:
+                    hist = pd.DataFrame()
+                
                 try: st.download_button("📄 Télécharger PDF", data=create_pdf(emp, hist), file_name=f"{emp['Nom']}.pdf", mime="application/pdf")
                 except: pass
                 c1, c2 = st.columns(2)
@@ -273,30 +292,42 @@ if rh is not None:
                     st.markdown("<div class='card'><h3>💰 Rémunération</h3>", unsafe_allow_html=True)
                     st.metric("Salaire Fixe", f"{emp.get('Salaire (€)', 0):,.0f} €")
                     st.metric("Primes", f"{emp.get('Primes (€)', 0):,.0f} €")
-                    st.metric("Total Brut", f"{(emp.get('Salaire (€)', 0)+emp.get('Primes (€)', 0)):,.0f} €")
-                    if str(emp.get('Au SMIC', 'No')).lower() == 'oui': st.markdown('<div class="alert-box">⚠️ Attention : Salaire au niveau du SMIC</div>', unsafe_allow_html=True)
                     st.markdown("</div>", unsafe_allow_html=True)
                 with c2:
                     st.markdown("<div class='card'><h3>🎓 Parcours Formation</h3>", unsafe_allow_html=True)
-                    if not hist.empty: st.dataframe(hist[['Type Formation', 'Coût Formation (€)']], hide_index=True, use_container_width=True)
-                    else: st.info("Aucune formation.")
+                    # Fix affichage colonne sécurisée
+                    cols_to_show = []
+                    if 'Type Formation' in hist.columns: cols_to_show.append('Type Formation')
+                    if 'Coût Formation (€)' in hist.columns: cols_to_show.append('Coût Formation (€)')
+                    
+                    if not hist.empty and cols_to_show:
+                         st.dataframe(hist[cols_to_show], hide_index=True, use_container_width=True)
+                    else: 
+                        st.info("Aucune formation.")
                     st.markdown("</div>", unsafe_allow_html=True)
 
-    # 3. FORMATION (Identique)
+    # 3. FORMATION
     elif selected == "Formation":
         st.title("🎓 Pilotage Formation")
-        budget_total = form_f['Coût Formation (€)'].sum()
-        nb_actions = len(form_f)
-        c1, c2 = st.columns(2)
-        c1.markdown(f"<div class='card'><div class='kpi-val'>{budget_total:,.0f} €</div><div class='kpi-lbl'>Budget Consommé</div></div>", unsafe_allow_html=True)
-        c2.markdown(f"<div class='card'><div class='kpi-val'>{nb_actions}</div><div class='kpi-lbl'>Actions</div></div>", unsafe_allow_html=True)
-        st.markdown("<div class='card'><h3>Détail</h3>", unsafe_allow_html=True)
-        st.dataframe(form_f, use_container_width=True)
-        st.markdown("</div>", unsafe_allow_html=True)
+        
+        if not form_detail.empty and 'Coût Formation (€)' in form_detail.columns:
+             # Filtrage selon le service sélectionné
+            f_view = form_detail[form_detail['Service'] == selected_service] if selected_service != 'Tous' else form_detail
+            budget_total = f_view['Coût Formation (€)'].sum()
+            nb_actions = len(f_view)
+            
+            c1, c2 = st.columns(2)
+            c1.markdown(f"<div class='card'><div class='kpi-val'>{budget_total:,.0f} €</div><div class='kpi-lbl'>Budget Consommé</div></div>", unsafe_allow_html=True)
+            c2.markdown(f"<div class='card'><div class='kpi-val'>{nb_actions}</div><div class='kpi-lbl'>Actions</div></div>", unsafe_allow_html=True)
+            st.markdown("<div class='card'><h3>Détail</h3>", unsafe_allow_html=True)
+            st.dataframe(f_view, use_container_width=True)
+            st.markdown("</div>", unsafe_allow_html=True)
+        else:
+             st.warning("Pas de données formation ou colonnes manquantes.")
 
-    # 4. RECRUTEMENT (Identique)
+    # 4. RECRUTEMENT
     elif selected == "Recrutement":
-        st.title("🎯 Recrutement")
+        st.title("🎯 Talent Acquisition")
         total_rec = rec['Coût Recrutement (€)'].sum()
         c1, c2 = st.columns(2)
         c1.markdown(f"<div class='card'><div class='kpi-val'>{total_rec:,.0f} €</div><div class='kpi-lbl'>Investissement</div></div>", unsafe_allow_html=True)
@@ -336,28 +367,51 @@ if rh is not None:
         else:
             st.warning("Veuillez remplir la feuille 'Temps & Projets' dans votre Google Sheet.")
 
-
-    # 6. SIMULATION
+    # 6. SIMULATION (CORRIGÉ AVEC DOUBLE MODE)
     elif selected == "Simulation":
         st.title("🔮 Prospective Salariale")
-        st.markdown("<div class='card'><h3>Paramètres</h3>", unsafe_allow_html=True)
-        augm = st.slider("Hypothèse d'augmentation (%)", 0.0, 10.0, 2.0, 0.1)
-        st.markdown("</div>", unsafe_allow_html=True)
         
-        ms_actuelle = rh_f['Salaire (€)'].sum() * 12 * 1.45
-        impact = ms_actuelle * (augm/100)
-        
-        c1, c2 = st.columns(2)
-        c1.markdown(f"<div class='card'><div class='kpi-val'>+ {impact:,.0f} €</div><div class='kpi-lbl'>Impact Annuel</div></div>", unsafe_allow_html=True)
-        
-        st.markdown("<div class='card'><h3>Projection Budgétaire</h3>", unsafe_allow_html=True)
-        # Comparaison Avant / Après
-        df_sim = pd.DataFrame({
-            'État': ['Actuel', 'Projeté'],
-            'Budget': [ms_actuelle, ms_actuelle + impact]
-        })
-        st.plotly_chart(clean_chart(px.bar(df_sim, x='État', y='Budget', color='État', text_auto='.2s')), use_container_width=True)
-        st.markdown("</div>", unsafe_allow_html=True)
+        mode_sim = st.radio("Type de simulation :", ["🏢 Globale (Service/Entreprise)", "👤 Individuelle (Salarié)"], horizontal=True)
+        st.markdown("---")
+
+        if mode_sim == "🏢 Globale (Service/Entreprise)":
+            st.markdown("<div class='card'><h3>Paramètres Globaux</h3>", unsafe_allow_html=True)
+            augm = st.slider("Hypothèse d'augmentation (%)", 0.0, 10.0, 2.0, 0.1)
+            st.markdown("</div>", unsafe_allow_html=True)
+            
+            ms_actuelle = rh_f['Salaire (€)'].sum() * 12 * 1.45
+            impact = ms_actuelle * (augm/100)
+            st.metric("Impact Financier (Annuel Chargé)", f"+ {impact:,.0f} €", delta="Surcoût", delta_color="inverse")
+            
+            st.plotly_chart(clean_chart(go.Figure(go.Waterfall(measure=["relative", "relative", "total"], x=["Actuel", "Impact", "Futur"], y=[ms_actuelle, impact, ms_actuelle+impact]))), use_container_width=True)
+
+        elif mode_sim == "👤 Individuelle (Salarié)":
+             col_sel, col_sim = st.columns([1, 2])
+             with col_sel:
+                 st.markdown("<div class='card'>", unsafe_allow_html=True)
+                 choix_indiv = st.selectbox("Choisir un salarié", sorted(rh_f['Nom'].unique().tolist()))
+                 emp_sim = rh[rh['Nom'] == choix_indiv].iloc[0]
+                 sal_base = emp_sim.get('Salaire (€)', 0)
+                 st.info(f"Salaire actuel : **{sal_base:,.0f} €**")
+                 
+                 type_hausse = st.radio("Type :", ["Pourcentage (%)", "Montant (€)"])
+                 if type_hausse == "Pourcentage (%)":
+                     val = st.number_input("Valeur %", 0.0, 50.0, 5.0)
+                     new_sal = sal_base * (1 + val/100)
+                 else:
+                     val = st.number_input("Montant €", 0, 5000, 100)
+                     new_sal = sal_base + val
+                 st.markdown("</div>", unsafe_allow_html=True)
+
+             with col_sim:
+                 st.markdown("<div class='card'><h3>Résultats</h3>", unsafe_allow_html=True)
+                 diff_mensuelle = new_sal - sal_base
+                 cout_patron_annuel = diff_mensuelle * 12 * 1.45
+                 
+                 m1, m2 = st.columns(2)
+                 m1.metric("Nouveau Salaire Brut", f"{new_sal:,.0f} €", delta=f"+{diff_mensuelle:.0f} €")
+                 m2.metric("Coût Total Employeur (Annuel)", f"{cout_patron_annuel:,.0f} €", delta="Impact", delta_color="inverse")
+                 st.markdown("</div>", unsafe_allow_html=True)
 
     # 7. GESTION BDD (CORRIGÉ AVEC SYNTAXE DÉPLIÉE)
     elif selected == "Gestion BDD":
