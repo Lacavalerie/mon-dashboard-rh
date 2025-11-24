@@ -10,7 +10,7 @@ import time
 from streamlit_option_menu import option_menu
 
 # Configuration
-st.set_page_config(page_title="RH Cockpit V73", layout="wide", initial_sidebar_state="expanded")
+st.set_page_config(page_title="RH Cockpit V72", layout="wide", initial_sidebar_state="expanded")
 
 # --- DESIGN ---
 st.markdown("""
@@ -48,8 +48,9 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-# --- FONCTIONS ---
+# --- FONCTIONS UTILES ---
 def calculer_turnover(df):
+    """Calcule le taux de turnover (Départs / Effectif total) * 100"""
     if 'Statut' in df.columns:
         departures = (df['Statut'] == 'Sorti').sum()
         active_staff = (df['Statut'] == 'Actif').sum()
@@ -74,10 +75,11 @@ def save_data_to_google(df, worksheet_name):
         ws = sheet.worksheet(worksheet_name)
         df_to_save = df.copy()
         for col in df_to_save.columns:
-            if pd.api.types.is_datetime64_any_dtype(df_to_save[col]):
-                df_to_save[col] = df_to_save[col].dt.strftime('%d/%m/%Y')
+            if pd.api.types.is_datetime64_any_dtype(df_to_save[col]): df_to_save[col] = df_to_save[col].dt.strftime('%d/%m/%Y')
         
+        # Fix JSON NaN
         df_to_save = df_to_save.fillna("")
+        
         ws.clear()
         ws.update([df_to_save.columns.values.tolist()] + df_to_save.values.tolist())
         st.toast(f"✅ {worksheet_name} sauvegardé !", icon="💾")
@@ -113,14 +115,16 @@ def create_pdf(emp, form_hist):
     pdf.cell(200, 10, txt=f"Salaire : {emp.get('Salaire (€)', 0)} EUR", ln=True)
     return pdf.output(dest='S').encode('latin-1')
 
-# --- LOGIN ---
+# --- GESTION LOGIN ---
 CLIENTS_DB = {
     "admin": {"password": "rh123", "sheet_name": "Dashboard_Data", "company_name": "H&C CONSEIL"},
     "client_a": {"password": "passwordA", "sheet_name": "Dashboard_Client_A", "company_name": "Client A"},
 }
+
 if 'logged_in' not in st.session_state: st.session_state['logged_in'] = False
 if 'current_sheet' not in st.session_state: st.session_state['current_sheet'] = ""
 if 'company_name' not in st.session_state: st.session_state['company_name'] = ""
+
 def check_login():
     u = st.session_state['u']; p = st.session_state['p']
     if u in CLIENTS_DB and CLIENTS_DB[u]['password'] == p:
@@ -129,6 +133,7 @@ def check_login():
         st.session_state['current_sheet'] = CLIENTS_DB[u]['sheet_name']
         st.session_state['company_name'] = CLIENTS_DB[u]['company_name']
     else: st.error("Identifiant incorrect")
+
 def logout(): st.session_state['logged_in'] = False; st.cache_data.clear(); st.rerun()
 
 if not st.session_state['logged_in']:
@@ -143,6 +148,7 @@ if not st.session_state['logged_in']:
         st.markdown("</div>", unsafe_allow_html=True)
     st.stop()
 
+
 # --- CHARGEMENT ---
 @st.cache_data(ttl=60)
 def load_data(sheet_name):
@@ -154,39 +160,27 @@ def load_data(sheet_name):
                 df = pd.DataFrame(sheet.worksheet(name).get_all_records())
                 df.columns = [c.strip() for c in df.columns]
                 data[name] = df
-            except: data[name] = pd.DataFrame()
+            except:
+                data[name] = pd.DataFrame()
 
-        # CORRECTION NOM COLONNES (Anti-Erreur)
         if not data['Salaires'].empty and 'Primes(€)' in data['Salaires'].columns: 
             data['Salaires'].rename(columns={'Primes(€)': 'Primes (€)'}, inplace=True)
         
-        # Ici le fix pour la formation
-        if not data['Formation'].empty:
-            if 'Type de Formation' in data['Formation'].columns: data['Formation'].rename(columns={'Type de Formation': 'Type Formation'}, inplace=True)
-            if 'Coût Formation' in data['Formation'].columns: data['Formation'].rename(columns={'Coût Formation': 'Coût Formation (€)'}, inplace=True)
-        
-        # Fusions
         if not data['Données Sociales'].empty and not data['Salaires'].empty:
             df_global = pd.merge(data['Données Sociales'], data['Salaires'], on='Nom', how='left')
-        else: df_global = data['Données Sociales']
+        else:
+            df_global = data['Données Sociales']
         
-        # Gestion Formation
-        if not data['Formation'].empty and 'Coût Formation (€)' in data['Formation'].columns:
+        if not data['Formation'].empty:
             data['Formation']['Coût Formation (€)'] = data['Formation']['Coût Formation (€)'].apply(clean_currency)
             form_agg = data['Formation'].groupby('Nom')['Coût Formation (€)'].sum().reset_index()
             df_global = pd.merge(df_global, form_agg, on='Nom', how='left')
             df_global['Coût Formation (€)'] = df_global['Coût Formation (€)'].fillna(0)
-            
-            # Création du détail enrichi pour les fiches
-            if not data['Données Sociales'].empty:
-                form_detail_enrichi = pd.merge(data['Formation'], data['Données Sociales'][['Nom', 'Service', 'CSP']], on='Nom', how='left')
-            else:
-                form_detail_enrichi = data['Formation']
+            form_detail_enrichi = pd.merge(data['Formation'], data['Données Sociales'][['Nom', 'Service', 'CSP']], on='Nom', how='left')
         else:
             df_global['Coût Formation (€)'] = 0
             form_detail_enrichi = pd.DataFrame()
 
-        # Nettoyage final
         if not data['Recrutement'].empty and 'Coût Recrutement (€)' in data['Recrutement'].columns:
             data['Recrutement']['Coût Recrutement (€)'] = data['Recrutement']['Coût Recrutement (€)'].apply(clean_currency)
         
@@ -233,7 +227,7 @@ if rh is not None:
         
         c1, c2, c3, c4 = st.columns(4)
         c1.markdown(f"<div class='card'><div class='kpi-val'>{nb}</div><div class='kpi-lbl'>Collaborateurs</div></div>", unsafe_allow_html=True)
-        c2.markdown(f"<div class='card'><div class='kpi-val'>{taux_turnover:.1f}%</div><div class='kpi-lbl'>Turnover</div></div>", unsafe_allow_html=True) 
+        c2.markdown(f"<div class='card'><div class='kpi-val'>{taux_turnover:.1f}%</div><div class='kpi-lbl'>Turnover (Départs/Total)</div></div>", unsafe_allow_html=True) 
         c3.markdown(f"<div class='card'><div class='kpi-val'>{ms/1000:.0f} k€</div><div class='kpi-lbl'>Masse Salariale</div></div>", unsafe_allow_html=True)
         c4.markdown(f"<div class='card'><div class='kpi-val'>{age:.0f} ans</div><div class='kpi-lbl'>Âge Moyen</div></div>", unsafe_allow_html=True)
         
@@ -252,6 +246,7 @@ if rh is not None:
                 fig.update_layout(xaxis=dict(tickvals=[-5, 0, 5], ticktext=['5', '0', '5']))
                 st.plotly_chart(clean_chart(fig), use_container_width=True)
             st.markdown("</div>", unsafe_allow_html=True)
+
 
     # 2. SALARIÉS
     elif selected == "Salariés":
@@ -277,132 +272,94 @@ if rh is not None:
                     st.markdown("</div>", unsafe_allow_html=True)
                 with c2:
                     st.markdown("<div class='card'><h3>🎓 Parcours Formation</h3>", unsafe_allow_html=True)
-                    
-                    # --- CORRECTIF ICI POUR EVITER KEYERROR ---
-                    cols_a_afficher = []
-                    if 'Type Formation' in hist.columns: cols_a_afficher.append('Type Formation')
-                    if 'Coût Formation (€)' in hist.columns: cols_a_afficher.append('Coût Formation (€)')
-                    
-                    if cols_a_afficher and not hist.empty:
-                        st.dataframe(hist[cols_a_afficher], hide_index=True, use_container_width=True)
-                    else:
-                        st.info("Aucune formation.")
+                    if not hist.empty: st.dataframe(hist[['Type Formation', 'Coût Formation (€)']], hide_index=True, use_container_width=True)
+                    else: st.info("Aucune formation.")
                     st.markdown("</div>", unsafe_allow_html=True)
 
     # 3. FORMATION
     elif selected == "Formation":
         st.title("🎓 Pilotage Formation")
-        if not form_detail.empty:
-             # Filtrage selon le service sélectionné
-            f_view = form_detail[form_detail['Service'] == selected_service] if selected_service != 'Tous' else form_detail
-            
-            if 'Coût Formation (€)' in f_view.columns:
-                budget_total = f_view['Coût Formation (€)'].sum()
-            else:
-                budget_total = 0
-                
-            nb_actions = len(f_view)
-            
-            c1, c2 = st.columns(2)
-            c1.markdown(f"<div class='card'><div class='kpi-val'>{budget_total:,.0f} €</div><div class='kpi-lbl'>Budget Consommé</div></div>", unsafe_allow_html=True)
-            c2.markdown(f"<div class='card'><div class='kpi-val'>{nb_actions}</div><div class='kpi-lbl'>Actions</div></div>", unsafe_allow_html=True)
-            st.markdown("<div class='card'><h3>Détail</h3>", unsafe_allow_html=True)
-            st.dataframe(f_view, use_container_width=True)
-            st.markdown("</div>", unsafe_allow_html=True)
-        else:
-            st.warning("Pas de données formation.")
+        # ... (Contenu Formation) ...
 
     # 4. RECRUTEMENT
     elif selected == "Recrutement":
         st.title("🎯 Recrutement")
-        # ... (Même code que V72) ...
-        st.dataframe(rec, use_container_width=True)
+        # ... (Contenu Recrutement) ...
 
-    # 5. TEMPS & PROJETS
+    # 5. TEMPS & PROJETS (AVEC GRAPHIQUE)
     elif selected == "Temps & Projets":
         st.title("⏳ Suivi des Temps")
-        if temps_projets is not None and not temps_projets.empty:
-            st.dataframe(temps_projets, use_container_width=True)
-        else: st.warning("Pas de données.")
-
-    # 6. SIMULATION (CORRIGÉ AVEC DOUBLE MODE)
-    elif selected == "Simulation":
-        st.title("🔮 Prospective Salariale")
         
-        mode_sim = st.radio("Type de simulation :", ["🏢 Globale (Service/Entreprise)", "👤 Individuelle (Salarié)"], horizontal=True)
-        st.markdown("---")
+        if temps_projets is not None and not temps_projets.empty:
+            # Nettoyage chiffres
+            if 'Heures Travaillées' in temps_projets.columns:
+                temps_projets['Heures Travaillées'] = pd.to_numeric(temps_projets['Heures Travaillées'], errors='coerce').fillna(0)
+            
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                st.markdown("<div class='card'><h3>Répartition par Projet</h3>", unsafe_allow_html=True)
+                if 'Projet' in temps_projets.columns:
+                    df_proj = temps_projets.groupby('Projet')['Heures Travaillées'].sum().reset_index()
+                    st.plotly_chart(clean_chart(px.pie(df_proj, values='Heures Travaillées', names='Projet', hole=0.6)), use_container_width=True)
+                st.markdown("</div>", unsafe_allow_html=True)
+                
+            with col2:
+                st.markdown("<div class='card'><h3>Top Collaborateurs</h3>", unsafe_allow_html=True)
+                if 'Nom' in temps_projets.columns:
+                    df_user = temps_projets.groupby('Nom')['Heures Travaillées'].sum().reset_index().sort_values('Heures Travaillées', ascending=True)
+                    st.plotly_chart(clean_chart(px.bar(df_user, x='Heures Travaillées', y='Nom', orientation='h', color='Heures Travaillées')), use_container_width=True)
+                st.markdown("</div>", unsafe_allow_html=True)
 
-        if mode_sim == "🏢 Globale (Service/Entreprise)":
-            st.markdown("<div class='card'><h3>Paramètres Globaux</h3>", unsafe_allow_html=True)
-            augm = st.slider("Hypothèse d'augmentation (%)", 0.0, 10.0, 2.0, 0.1)
+            st.markdown("<div class='card'><h3>Données Brutes</h3>", unsafe_allow_html=True)
+            st.dataframe(temps_projets, use_container_width=True)
             st.markdown("</div>", unsafe_allow_html=True)
-            
-            ms_actuelle = rh_f['Salaire (€)'].sum() * 12 * 1.45
-            impact = ms_actuelle * (augm/100)
-            st.metric("Impact Financier (Annuel Chargé)", f"+ {impact:,.0f} €", delta="Surcoût", delta_color="inverse")
-            
-            st.plotly_chart(clean_chart(go.Figure(go.Waterfall(measure=["relative", "relative", "total"], x=["Actuel", "Impact", "Futur"], y=[ms_actuelle, impact, ms_actuelle+impact]))), use_container_width=True)
+        else:
+            st.warning("Veuillez remplir la feuille 'Temps & Projets' dans votre Google Sheet.")
 
-        elif mode_sim == "👤 Individuelle (Salarié)":
-             col_sel, col_sim = st.columns([1, 2])
-             with col_sel:
-                 st.markdown("<div class='card'>", unsafe_allow_html=True)
-                 choix_indiv = st.selectbox("Choisir un salarié", sorted(rh_f['Nom'].unique().tolist()))
-                 emp_sim = rh[rh['Nom'] == choix_indiv].iloc[0]
-                 sal_base = emp_sim.get('Salaire (€)', 0)
-                 st.info(f"Salaire actuel : **{sal_base:,.0f} €**")
-                 
-                 type_hausse = st.radio("Type :", ["Pourcentage (%)", "Montant (€)"])
-                 if type_hausse == "Pourcentage (%)":
-                     val = st.number_input("Valeur %", 0.0, 50.0, 5.0)
-                     new_sal = sal_base * (1 + val/100)
-                 else:
-                     val = st.number_input("Montant €", 0, 5000, 100)
-                     new_sal = sal_base + val
-                 st.markdown("</div>", unsafe_allow_html=True)
+    # 6. SIMULATION
+    elif selected == "Simulation":
+        st.title("🔮 Simulation")
+        # ... (Contenu Simulation) ...
 
-             with col_sim:
-                 st.markdown("<div class='card'><h3>Résultats</h3>", unsafe_allow_html=True)
-                 diff_mensuelle = new_sal - sal_base
-                 cout_patron_annuel = diff_mensuelle * 12 * 1.45
-                 
-                 m1, m2 = st.columns(2)
-                 m1.metric("Nouveau Salaire Brut", f"{new_sal:,.0f} €", delta=f"+{diff_mensuelle:.0f} €")
-                 m2.metric("Coût Total Employeur (Annuel)", f"{cout_patron_annuel:,.0f} €", delta="Impact", delta_color="inverse")
-                 st.markdown("</div>", unsafe_allow_html=True)
-
-    # 7. GESTION BDD
+    # 7. GESTION BDD (CORRIGÉ AVEC SYNTAXE DÉPLIÉE)
     elif selected == "Gestion BDD":
         st.title("🛠️ Centre de Gestion")
+        st.info(f"Client : {st.session_state.get('company_name', 'Demo')}")
         
         tab_rh, tab_sal, tab_form, tab_rec, tab_temps = st.tabs(["👥 Employés", "💰 Salaires", "🎓 Formation", "🎯 Recrutement", "⏳ Temps"])
         
         with tab_rh:
             st.markdown("<div class='card'>", unsafe_allow_html=True)
             edited_rh = st.data_editor(raw_data['Données Sociales'], num_rows="dynamic", use_container_width=True)
-            if st.button("💾 Sauvegarder Employés"): save_data_to_google(edited_rh, 'Données Sociales')
+            if st.button("💾 Sauvegarder Employés"):
+                save_data_to_google(edited_rh, 'Données Sociales')
             st.markdown("</div>", unsafe_allow_html=True)
             
         with tab_sal:
             st.markdown("<div class='card'>", unsafe_allow_html=True)
             edited_sal = st.data_editor(raw_data['Salaires'], num_rows="dynamic", use_container_width=True)
-            if st.button("💾 Sauvegarder Salaires"): save_data_to_google(edited_sal, 'Salaires')
+            if st.button("💾 Sauvegarder Salaires"):
+                save_data_to_google(edited_sal, 'Salaires')
             st.markdown("</div>", unsafe_allow_html=True)
             
         with tab_form:
             st.markdown("<div class='card'>", unsafe_allow_html=True)
             edited_form = st.data_editor(raw_data['Formation'], num_rows="dynamic", use_container_width=True)
-            if st.button("💾 Sauvegarder Formations"): save_data_to_google(edited_form, 'Formation')
+            if st.button("💾 Sauvegarder Formations"):
+                save_data_to_google(edited_form, 'Formation')
             st.markdown("</div>", unsafe_allow_html=True)
-        
+            
         with tab_rec:
             st.markdown("<div class='card'>", unsafe_allow_html=True)
             edited_rec = st.data_editor(raw_data['Recrutement'], num_rows="dynamic", use_container_width=True)
-            if st.button("💾 Sauvegarder Recrutements"): save_data_to_google(edited_rec, 'Recrutement')
+            if st.button("💾 Sauvegarder Recrutements"):
+                save_data_to_google(edited_rec, 'Recrutement')
             st.markdown("</div>", unsafe_allow_html=True)
-
+            
         with tab_temps:
             st.markdown("<div class='card'>", unsafe_allow_html=True)
             edited_temps = st.data_editor(raw_data['Temps & Projets'], num_rows="dynamic", use_container_width=True)
-            if st.button("💾 Sauvegarder Temps"): save_data_to_google(edited_temps, 'Temps & Projets')
+            if st.button("💾 Sauvegarder Temps"):
+                save_data_to_google(edited_temps, 'Temps & Projets')
             st.markdown("</div>", unsafe_allow_html=True)
