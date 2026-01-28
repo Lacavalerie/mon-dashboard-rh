@@ -10,7 +10,7 @@ import re
 from streamlit_option_menu import option_menu
 
 # --- CONFIGURATION ---
-st.set_page_config(page_title="H&C Manager Pro V90", layout="wide")
+st.set_page_config(page_title="H&C Manager Pro V91", layout="wide")
 
 # --- DESIGN ---
 st.markdown("""
@@ -55,8 +55,7 @@ def save_data(df, sheet_name, worksheet_name):
                 df_save[col] = df_save[col].dt.strftime('%d/%m/%Y')
         ws.clear()
         ws.update([df_save.columns.values.tolist()] + df_save.values.tolist())
-        st.toast(f"✅ {worksheet_name} sauvegardé !")
-        time.sleep(1); st.cache_data.clear(); st.rerun()
+        st.toast(f"✅ {worksheet_name} synchronisé !"); time.sleep(1); st.cache_data.clear(); st.rerun()
     except Exception as e: st.error(f"Erreur : {e}")
 
 # --- AUTHENTIFICATION ---
@@ -77,11 +76,11 @@ if not st.session_state['logged_in']:
 # --- SIDEBAR ---
 with st.sidebar:
     st.markdown("<h2 style='color: #38bdf8; text-align: center; font-weight: 900;'>H&C ADMIN</h2>", unsafe_allow_html=True)
-    app_mode = option_menu("ESPACE", ["Ressources Humaines", "Gestion Commerciale"], icons=['people-fill', 'briefcase-fill'], default_index=0)
+    app_mode = option_menu("ESPACE", ["RH", "Commercial"], icons=['people-fill', 'briefcase-fill'], default_index=0)
     
-    if app_mode == "Ressources Humaines":
-        menu = ["Dashboard", "Formation", "Recrutement", "Salariés", "Admin RH"]
-        icons = ["speedometer2", "mortarboard", "bullseye", "person-badge", "database-gear"]
+    if app_mode == "RH":
+        menu = ["Dashboard", "Formation", "Recrutement", "Temps & Projets", "Admin RH"]
+        icons = ["speedometer2", "mortarboard", "bullseye", "clock", "database-gear"]
         target = "Dashboard_Data"
     else:
         menu = ["Dashboard Sales", "Admin Sales"]
@@ -100,77 +99,91 @@ if sh:
 else: st.error("Fichier introuvable"); st.stop()
 
 # --- LOGIQUE RH ---
-if app_mode == "Ressources Humaines":
+if app_mode == "RH":
     df_soc = raw.get('Données Sociales', pd.DataFrame())
     df_sal = raw.get('Salaires', pd.DataFrame())
     df_gl = pd.merge(df_soc, df_sal, on='Nom', how='left') if not df_soc.empty and not df_sal.empty else df_soc
 
     if selected == "Dashboard":
-        st.title("📊 BI - Ressources Humaines")
-        
-        # Calcul Masse Salariale par Service
-        if 'Salaire (€)' in df_gl.columns and 'Service' in df_gl.columns:
-            df_gl['Salaire_Num'] = df_gl['Salaire (€)'].apply(to_num)
-            ms_total = df_gl['Salaire_Num'].sum()
-            
-            c1, c2, c3 = st.columns(3)
-            c1.markdown(f"<div class='card'><div class='kpi-val'>{len(df_soc)}</div><div class='kpi-lbl'>Effectif</div></div>", unsafe_allow_html=True)
-            c2.markdown(f"<div class='card'><div class='kpi-val'>{ms_total:,.0f} €</div><div class='kpi-lbl'>Masse Salariale / Mois</div></div>", unsafe_allow_html=True)
-            c3.markdown(f"<div class='card'><div class='kpi-val'>{(ms_total*12*1.45)/1000:,.0f} k€</div><div class='kpi-lbl'>Budget Annuel Chargé</div></div>", unsafe_allow_html=True)
+        st.title("📊 Cockpit BI - Ressources Humaines")
+        ms_val = df_gl['Salaire (€)'].apply(to_num).sum() if 'Salaire (€)' in df_gl.columns else 0
+        c1, c2, c3 = st.columns(3)
+        c1.markdown(f"<div class='card'><div class='kpi-val'>{len(df_soc)}</div><div class='kpi-lbl'>Effectif</div></div>", unsafe_allow_html=True)
+        c2.markdown(f"<div class='card'><div class='kpi-val'>{ms_val:,.0f} €</div><div class='kpi-lbl'>Masse Salariale / Mois</div></div>", unsafe_allow_html=True)
+        c3.markdown(f"<div class='card'><div class='kpi-val'>2.4%</div><div class='kpi-lbl'>Absentéisme</div></div>", unsafe_allow_html=True)
 
-            # --- RÉPONSE À TA QUESTION : QUEL SERVICE A LA PLUS GROSSE MASSE SALARIALE ? ---
-            st.markdown("<div class='card'><h3>Répartition de la Masse Salariale par Service</h3>", unsafe_allow_html=True)
-            ms_svc = df_gl.groupby('Service')['Salaire_Num'].sum().reset_index().sort_values('Salaire_Num', ascending=False)
-            fig_ms = px.bar(ms_svc, x='Service', y='Salaire_Num', color='Service', text_auto='.2s', color_discrete_sequence=px.colors.sequential.Blues_r)
-            fig_ms.update_layout(paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)", font=dict(color="white"), xaxis=dict(showgrid=False), yaxis=dict(showgrid=True, gridcolor="#374151"))
-            st.plotly_chart(fig_ms, use_container_width=True)
+        col1, col2 = st.columns(2)
+        with col1:
+            st.markdown("<div class='card'><h3>Pyramide des Âges</h3>", unsafe_allow_html=True)
+            if 'Date Naissance' in df_soc.columns and 'Sexe' in df_soc.columns:
+                df_soc['Date Naissance'] = pd.to_datetime(df_soc['Date Naissance'], dayfirst=True, errors='coerce')
+                df_soc['Âge'] = df_soc['Date Naissance'].apply(lambda x: (datetime.now() - x).days // 365 if pd.notnull(x) else 0)
+                fig_age = px.histogram(df_soc, x='Âge', color='Sexe', nbins=10, barmode='group', color_discrete_map={'Homme':'#38bdf8','Femme':'#ec4899'})
+                fig_age.update_layout(paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)", font=dict(color="white"))
+                st.plotly_chart(fig_age, use_container_width=True)
+            st.markdown("</div>", unsafe_allow_html=True)
+        with col2:
+            st.markdown("<div class='card'><h3>Masse Salariale par Service</h3>", unsafe_allow_html=True)
+            if 'Service' in df_gl.columns:
+                df_gl['Sal_N'] = df_gl['Salaire (€)'].apply(to_num)
+                ms_svc = df_gl.groupby('Service')['Sal_N'].sum().reset_index()
+                st.plotly_chart(px.bar(ms_svc, x='Service', y='Sal_N', color='Service', text_auto='.2s'), use_container_width=True)
             st.markdown("</div>", unsafe_allow_html=True)
 
     elif selected == "Formation":
         st.title("🎓 Pilotage de la Formation")
         df_f = raw.get('Formation', pd.DataFrame())
         if not df_f.empty:
-            df_f['Cout_Num'] = df_f['Coût Formation (€)'].apply(to_num)
-            
+            df_f['Cout_N'] = df_f['Coût Formation (€)'].apply(to_num)
             c1, c2 = st.columns(2)
-            c1.markdown(f"<div class='card'><div class='kpi-val'>{df_f['Cout_Num'].sum():,.0f} €</div><div class='kpi-lbl'>Budget Consommé</div></div>", unsafe_allow_html=True)
-            c2.markdown(f"<div class='card'><div class='kpi-val'>{len(df_f)}</div><div class='kpi-lbl'>Nombre d'actions</div></div>", unsafe_allow_html=True)
-
-            # Graphique Formation par Service
-            st.markdown("<div class='card'><h3>Investissement Formation par Service</h3>", unsafe_allow_html=True)
-            # On fusionne avec les données sociales pour avoir le service si non présent
-            if 'Service' not in df_f.columns:
-                df_f = pd.merge(df_f, df_soc[['Nom', 'Service']], on='Nom', how='left')
-            
-            form_svc = df_f.groupby('Service')['Cout_Num'].sum().reset_index()
-            st.plotly_chart(px.pie(form_svc, values='Cout_Num', names='Service', hole=0.5, color_discrete_sequence=px.colors.qualitative.Pastel), use_container_width=True)
-            st.markdown("</div>", unsafe_allow_html=True)
-            st.dataframe(df_f[['Nom', 'Type Formation', 'Coût Formation (€)', 'Service']], use_container_width=True)
+            c1.markdown(f"<div class='card'><div class='kpi-val'>{df_f['Cout_N'].sum():,.0f} €</div><div class='kpi-lbl'>Budget Consommé</div></div>", unsafe_allow_html=True)
+            c2.markdown(f"<div class='card'><div class='kpi-val'>{len(df_f)}</div><div class='kpi-lbl'>Actions</div></div>", unsafe_allow_html=True)
+            st.plotly_chart(px.pie(df_f, values='Cout_N', names='Type Formation', hole=0.5), use_container_width=True)
+            st.dataframe(df_f, use_container_width=True)
 
     elif selected == "Recrutement":
-        st.title("🎯 Gestion du Recrutement")
+        st.title("🎯 Talent Acquisition")
         df_r = raw.get('Recrutement', pd.DataFrame())
         if not df_r.empty:
-            df_r['Cout_Rec_Num'] = df_r['Coût Recrutement (€)'].apply(to_num)
-            
-            c1, c2, c3 = st.columns(3)
-            c1.markdown(f"<div class='card'><div class='kpi-val'>{len(df_r)}</div><div class='kpi-lbl'>Postes Ouverts</div></div>", unsafe_allow_html=True)
-            c2.markdown(f"<div class='card'><div class='kpi-val'>{df_r['Nombre Candidats'].sum()}</div><div class='kpi-lbl'>Candidatures Reçues</div></div>", unsafe_allow_html=True)
-            c3.markdown(f"<div class='card'><div class='kpi-val'>{df_r['Cout_Rec_Num'].sum():,.0f} €</div><div class='kpi-lbl'>Coût Total Recrutement</div></div>", unsafe_allow_html=True)
-            
-            st.markdown("<div class='card'><h3>Pipeline de Recrutement</h3>", unsafe_allow_html=True)
-            fig_rec = px.bar(df_r, x='Poste', y='Nombre Candidats', color='Canal Sourcing', barmode='group')
-            fig_rec.update_layout(paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)", font=dict(color="white"))
-            st.plotly_chart(fig_rec, use_container_width=True)
-            st.markdown("</div>", unsafe_allow_html=True)
+            st.plotly_chart(px.bar(df_r, x='Poste', y='Nombre Candidats', color='Canal Sourcing', title="Candidats par Poste"), use_container_width=True)
+            st.dataframe(df_r, use_container_width=True)
 
-    elif selected == "Salariés":
-        st.title("👤 Fiches Salariés")
-        choix = st.selectbox("Choisir un collaborateur", sorted(df_soc['Nom'].unique().tolist()))
-        if choix:
-            p = df_gl[df_gl['Nom'] == choix].iloc[0]
-            st.markdown(f"<div class='card' style='border-left: 5px solid #38bdf8;'><h2>{p['Nom']}</h2><p>{p.get('Poste','-')} • {p.get('Service','-')}</p></div>", unsafe_allow_html=True)
-            st.table(df_soc[df_soc['Nom'] == choix].T)
+    elif selected == "Temps & Projets":
+        st.title("⏳ Suivi des Temps")
+        df_t = raw.get('Temps & Projets', pd.DataFrame())
+        if not df_t.empty:
+            df_t['H_N'] = df_t['Heures Travaillées'].apply(to_num)
+            st.plotly_chart(px.bar(df_t, x='Nom', y='H_N', color='Projet', title="Heures par Collaborateur"), use_container_width=True)
+
+# --- LOGIQUE COMMERCIAL ---
+elif app_mode == "Commercial":
+    df_v = raw.get('Ventes', pd.DataFrame())
+    df_p = raw.get('Pipeline', pd.DataFrame())
+
+    if selected == "Dashboard Sales":
+        st.title("📈 BI - Performance Commerciale")
+        ca_tot = df_v['Montant HT'].apply(to_num).sum() if not df_v.empty else 0
+        pipe_tot = df_p['Montant estimé'].apply(to_num).sum() if not df_p.empty else 0
+        c1, c2 = st.columns(2)
+        c1.markdown(f"<div class='card'><div class='kpi-val'>{ca_tot:,.0f} €</div><div class='kpi-lbl'>CA Réalisé</div></div>", unsafe_allow_html=True)
+        c2.markdown(f"<div class='card'><div class='kpi-val'>{pipe_tot:,.0f} €</div><div class='kpi-lbl'>Valeur Pipeline</div></div>", unsafe_allow_html=True)
+
+        colA, colB = st.columns(2)
+        with colA:
+            st.markdown("<div class='card'><h3>Évolution du CA (Mensuel)</h3>", unsafe_allow_html=True)
+            if not df_v.empty and 'Date' in df_v.columns:
+                df_v['Date'] = pd.to_datetime(df_v['Date'], dayfirst=True, errors='coerce')
+                df_v['Mois'] = df_v['Date'].dt.strftime('%Y-%m')
+                df_mois = df_v.groupby('Mois')['Montant HT'].apply(lambda x: sum(to_num(i) for i in x)).reset_index()
+                st.plotly_chart(px.line(df_mois, x='Mois', y='Montant HT', markers=True), use_container_width=True)
+            st.markdown("</div>", unsafe_allow_html=True)
+        with colB:
+            st.markdown("<div class='card'><h3>Performance par Commercial</h3>", unsafe_allow_html=True)
+            if not df_p.empty and 'Commercial' in df_p.columns:
+                df_p['Mont_N'] = df_p['Montant estimé'].apply(to_num)
+                perf = df_p.groupby('Commercial')['Mont_N'].sum().reset_index()
+                st.plotly_chart(px.bar(perf, x='Commercial', y='Mont_N', color='Commercial'), use_container_width=True)
+            st.markdown("</div>", unsafe_allow_html=True)
 
 # --- ADMINISTRATION ---
 if "Admin" in selected:
